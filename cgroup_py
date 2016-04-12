@@ -180,7 +180,7 @@ def move(uOld):
 				with open(chkPath + "/memory.memsw.limit_in_bytes", "w") as curFile:
 						curFile.write(totalMem)
 				if oomPause:
-					with open(chkPath + "/memory.oom_control", "w" as curFile:
+					with open(chkPath + "/memory.oom_control", "w") as curFile:
 						curFile.write("1")
 
 
