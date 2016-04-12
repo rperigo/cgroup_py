@@ -1,0 +1,233 @@
+::::::::::::::::::::::::::::::CGroup_Py::::::::::::::::::::::::::::::::
+-----------------------------------------------------------------------
+
+1) Overview
+
+	This script is designed to interface with the Linux kernel's cgroup
+	system to allow for automated grouping of tasks per UID. It accomp-
+	lishes this via a series of loops through tasklists presented by
+	the cgroup system, tallying per-UID CPU utilization, system CPU
+	time as a whole, and writing of parameters to cgroups on the fly.
+	
+	===================================================================
+
+
+
+	1.1) Requirements and Configuration
+
+	python 2.x (>= 2.6)
+	libcgroup, with proper configuration (see below)	
+
+	The script is written in Python 2.6, with an ancillary Bash script
+	for cleanup purposes. Care was taken to use libraries shipped with
+	the default Python installation on a CentOS 6.7 system, so no addi-
+	tional work with pip or yum should be required on the Python front.
+	
+	Additionally, the script requires that libcgroup be installed and 
+	configured for a single root cgroup hierarchy containing the
+	following subsystems:
+
+		cpu
+		cpuset
+		cpuacct
+		memory
+
+	By default, the cgroup system will want to create individual groups
+	or hierarchies for each subsystem (e.g. cpu, memory, blkio), which
+	will not function with this script.
+	
+	Since the cgroup system is rather rigid about how these things can
+	be mounted, we basically need to create a root group in:
+
+		/etc/cgconfig.conf
+
+	To mount up our needed systems. The included template cgconfig -
+	cgconfig.SETUP.conf has default settings pointing the root group
+	to:
+
+		/cgroup/karst
+
+	The general idea is that the lines mounting cpu,cpuset,cpuacct, and
+	memory should all be pointing to the same place - so just changing 
+	"karst" to your preferred root name should suffice.
+
+	===================================================================
+
+
+
+	1.1.1) Config file
+
+	The script uses a simple .INI style configuration file - 
+	cgroup_py.cfg - to store needed variables.
+	
+	-------------------------------------------------------------------
+	minUID = XXX
+	-------------------------------------------------------------------
+	This stores	a minimum UID under which tasks will not be processed.
+	Allows us to ignore processes running as root or other system users
+	as these should all be blocked into one big multi-user group (which
+	is adequately handled by leaving them in the root cgroup).
+
+
+	-------------------------------------------------------------------
+	coreThreshold = xx
+	-------------------------------------------------------------------
+	Stores the percentage of TOTAL (not per-core) CPU time we want to
+	set as our upper usage threshold. This allows us to keep a few per-
+	cent free to keep things from getting completely out of control.
+
+	In cfg, this ranges from 1.0-98.0, which is later translated into a 
+	decimal	expression of percentage - e.g. a value of 90 in the config
+	results in an actual value of .90 in the script. The script will
+	also automatically sanitize out-of-range values to either the min-
+	imum or maximum value depending on which extreme it is on.
+
+
+	-------------------------------------------------------------------
+	activityThreshold = xx
+	-------------------------------------------------------------------
+	Stores the percentage of TOTAL system CPU time over which a user
+	will be considered 'active' for purposes of calculating appropriate
+	CPU time limits. Users whose total CPU usage is below this value
+	will be ignored when dividing available CPU time. 
+	
+	Once they cross the threshold, the script will automatically 
+	consider them in limit calculations on the next run. Like the
+	coreThreshold value, it is stored as ~1-100 percent value in cfg,
+	and divided for mathematical use in the script.
+
+	
+	-------------------------------------------------------------------
+	memoryLimit = x.x
+	-------------------------------------------------------------------
+	Stores a per-UID limit on RAM usage. This is NOT dynamically alloca-
+	ted, just a static limit that is set by the script on init and then
+	enforced from that point forward. Value is in GIGABYTES.
+
+
+	-------------------------------------------------------------------
+	cGroupRoot = /path/to/cgroup
+	-------------------------------------------------------------------
+	Stores the path to the root cgroup hierarchy as discussed in (1.1).
+	On RHEL/Cent systems, this should be /cgroup/something.
+
+	
+	-------------------------------------------------------------------
+	interval = x
+	-------------------------------------------------------------------
+	The delay in seconds between runs of the script's main loop. Short
+	is good, but extremely short intervals may increase CPU usage by
+	the script. On a 4-core/8-thread i7 system, 3-5 second intervals
+	resulted in CPU usage < 1% by the script. .5s interval resulted in
+	solid 2% CPU usage, which is likely to increase with the number of
+	users/tasks.
+
+	In testing, 5s or so is a good spot for a balance of performance
+	and reaction time.
+	
+
+	-------------------------------------------------------------------
+	oomPause = {True, False}
+	-------------------------------------------------------------------
+	Decides whether to enable the OOM killer if a user hits their mem
+	limit. USE WITH CAUTION, as if this is set to True, the OOM killer
+	will not run, and the user's processes will sleep until more mem is
+	available. The memory will remain allocated for that time. Default
+	is "False"
+
+	===================================================================
+
+
+	
+	1.1.2) Installation
+
+	Presuming requirements are met, cgroup_py.py and cgroupClean.sh will
+	need to be copied to /usr/bin and made executable. cgroup_py (.sh
+	init script) can be moved to /etc/rc.d/init.d, made executable,
+	and 
+	
+	chkconfig cgroup_py on 
+
+	run to enable it at boot.
+	
+	Configuration lives at /etc/cgroup_py.cfg. If you wish to adjust
+	these locations, the variables can be changed within the scripts.
+
+	There is an INSTALL script included which should make this process
+	more seamless.
+	===================================================================
+
+
+
+2) Running the script, and functionality
+
+	The script does not take much in the way of arguments. It can be
+	set to run at boot time via the included init script, or can be
+	run from a root terminal with:
+
+	/etc/init.d/cgroup_py start
+
+	or 
+	
+	cgroup_py
+
+	There's a -v option for verbose messages, an -i switch to display
+	some information and exit, and a -t switch to override the con-
+	figured interval.
+
+	The script will log to /var/log/cgroup_py.log. Care has been
+	taken to keep the amount of information logged to a minimum to
+	keep from spamming output to the log.
+
+	===================================================================
+
+
+	2.1) Inner Workings
+
+	The script is pretty heavily commented as to how and why it does 
+	what it does, but a synopsis will be provided for completeness.
+
+	In short, the script works by running through a few loops on each
+	iteration, leveraging the fact that the cgroup system is designed
+	around a series of pseudofiles in /cgroup/$root/$group which can
+	be manipulated using simple tools like cat and echo. These utilit-
+	ies have been replaced by file.write() and file.read() in the
+	script, but the functionality is the same.
+
+	The first loop of each iteration runs through /proc/stat to get
+	current values for total system CPU time. This is then compared
+	against values from the last iteration to get actual load values
+	via the delta in cpu time between iterations, and the current
+	values returned to be passed back the next run.
+
+	This is run once OUTSIDE of the loop to provide a baseline.
+
+	The second loop is broken into two sections - a first run to create
+	cgroups for any users that have logged in / started running threads
+	since the last iteration, as well as move any new threads into the
+	appropriate cgroups. It does this by leveraging the pseudofile:
+
+		/cgroup/$root/tasks
+
+	The above contains a list of ALL active PIDs on the system not
+	assigned to another cgroup. The script simply loops through,
+	gets the process' owner from /proc, and generates cgroups/moves
+	processes accordingly.
+
+	Note that real-time threads are not moved if the system has
+	real-time group scheduling enabled. Those will stay in the root.
+
+	Once the processes are moved, each user's cgroup now has its own
+	tasks file similar to the one above. The script then loops through
+	each of these to get CPU statistics for each user. This is useful
+	in deciding whether to include a given user in calculations for
+	CPU limits, keeping "idle" users from artificially limiting those
+	who are actually using the system. This second sub-loop also
+	is responsible for setting limits on CPU time.
+
+	This functionality is in the second stage of the function to avoid
+	users being artificially kept at low limits after others have left.
+	With the parameters being set after looping through the root task
+	list, limits could only be changed for a user if they spawned a new
+	process, so this functionality was changed - requiring a second for
+	loop but providing much better control over limits.
