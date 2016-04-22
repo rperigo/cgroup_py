@@ -1,0 +1,3 @@
+This message is to inform you that a process under your account has exhausted all available physical memory and processes have been automatically terminated by the system.
+
+When this occurs, the process with the highest memory usage under a user account is terminated, leaving others intact.

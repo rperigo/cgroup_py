@@ -24,6 +24,9 @@ class userData:
 		self.throttle = dict()
 		self.uTime = dict()
 		self.igProcs = dict()
+#		self.hogs = memHogs()
+		self.hogs_usage = dict()
+		self.hogs_added = dict()
 
 # Simple handler function to listen for an interrupt and respond appropriately.
 ####################################################################################################
@@ -33,6 +36,22 @@ def ctrlCHandler(sig, frame):
 	logging.info("*************************************")
 	if os.path.exists(pidFile):
 		os.popen("rm -f " + pidFile)
+	for each in os.listdir(cGroupRoot):
+		uPids = list()
+		if 'UID' in each:
+			try:
+				with open(cGroupRoot+"/"+each+"/tasks") as cur:
+					uPids = cur.read().splitlines()
+			except:
+				logging.warning("Orphan Cgroup cannot be cleaned! %s", each)
+			
+			for each in uPids:
+				with open(cGroupRoot+"/tasks", "a") as cur:
+					try:
+						print >>cur, each
+					except IOError:
+						logging.info("Could not move process %s back to root cgroup.", each)
+					
 	sys.exit(0)
 
 # Get number of NUMA memory nodes (needed by cpuset.mems). 			    
@@ -65,7 +84,6 @@ def getCPUTotal(oldValues):
 	tempint = []
 	for field in cpu[2:10]:
 		tempint.append(float(field))
-	
 	activeTime = 0
 	totalTime = 0
 	totalChange = 0
@@ -82,6 +100,9 @@ def getCPUTotal(oldValues):
 
 	return oldValues
 
+	
+
+
 #####################################################################################################				
 # The real meat of this script - the move() function. 
 # Now with roughly one billion fewer arguments due to refactoring around globals
@@ -91,13 +112,21 @@ def getCPUTotal(oldValues):
 # Second for loop then goes through each UIDxxx/tasks file and tallies some information on user CPU
 # time / sets limits accordingly.
 #####################################################################################################
-def move(uOld):
-
+def move(uOld, count):
+	userSess = "0"
+	oldHogs_added = dict()
+	oldHogs_usage = dict()
+	if count != 0:
+		oldHogs_added = uOld.hogs_added.copy()
+		oldHogs_usage = uOld.hogs_usage.copy()
+	run = False
+	memUsed = 0
 	with open(unassignedTasks) as f:
 		pids = f.read().splitlines() 		
 	floatQuota = float(userQuota)
 	shouldThrottle = 0
 	thresh = coreThreshold + .2
+	sessID = ""
 	uNew = userData() 
 	for p in pids:
 
@@ -129,6 +158,8 @@ def move(uOld):
 						try:						
 							os.mkdir(chkPath, 0700)
 							os.chown(chkPath, uid, -1)
+							logging.info("Setting up OOM monitor for UID %s", sUID)
+							subprocess.Popen(['python', '/usr/bin/cgOOMailer.py', chkPath+'/cgroup.event_control', chkPath+'/memory.oom_control', sUID])
 						except:
 							logging.warning("Unable to create CGroup directory for %s.", sUID)
 						else:
@@ -161,9 +192,10 @@ def move(uOld):
 	# new processes in order to have their limits adjusted.
 	###########################################################
 	for subDir in os.listdir(cGroupRoot):
+		
 		if 'UID' in subDir:
 			chkPath = cGroupRoot + subDir
-
+			userID = subDir.translate(None, 'UID')
 			with open(chkPath + '/tasks') as tf:
 				uPIDS = tf.read().splitlines()
 			try:
@@ -179,13 +211,40 @@ def move(uOld):
 				#disable swap. This will force processes to OOM-kill when the user's memlimit is reached.
 				with open(chkPath + "/memory.memsw.limit_in_bytes", "w") as curFile:
 						curFile.write(totalMem)
-				if oomPause:
-					with open(chkPath + "/memory.oom_control", "w") as curFile:
-						curFile.write("1")
-
-
 			except IOError:
 				logging.warning("Unable to write parameters to cgroup: %s", subDir)	
+
+			with open(chkPath+"/memory.memsw.usage_in_bytes") as curF:
+				memUsed = float(curF.read())
+			
+			hr = '{0:.2g}'.format(memUsed / 1073741824)
+			compTotal = float(totalMem)
+			hrT = str(compTotal / 1073741824)
+			if not subDir in oldHogs_added:
+				uNew.hogs_added[subDir] = count
+				uNew.hogs_usage[subDir] = memUsed
+				run = True
+			else: 
+				martin = uOld.hogs_added[subDir]
+				will = uOld.hogs_usage[subDir]
+				if (count - martin) > 150:
+					run = True
+				elif ((memUsed - will)/compTotal) > .10:
+					run = True
+				else: 
+					run = False
+					uNew.hogs_added[subDir] = martin
+					uNew.hogs_usage[subDir] = will
+#			try:
+#				with open(chkPath +"/memory.memsw.usage_in_bytes") as curFile:
+#					mU = float(curFile.read())
+#			except:
+#				logging.warning("Can't read memory usage %s", subDir)				
+#			if mU > float(totalMem) * .66:
+#				if not subDir in memHogs:
+#					subprocess.Popen(['notify-send',"'Memory Usage at 66%'"])
+#					memHogs[
+						
 
 			# init vars for usr total cputime
 			userTime = 0
@@ -195,7 +254,7 @@ def move(uOld):
 				procFolder = '/proc/' + process
 				
 
-				# Get process CPU usage, add to user's tally
+				# Get process CPU usage, add to user's tallclass memHogs:
 				###########################################
 				if os.path.exists(procFolder):
 					
@@ -207,21 +266,54 @@ def move(uOld):
 					try:		
 						with open(procFolder + '/status') as f:
 							status = f.read().splitlines()
+					
 						getTGroup = status[2].split(':')
 						tGroup = getTGroup[1].strip()
 						if tGroup == process:
 							with open(procFolder + '/stat') as sf:
-								procStat = sf.read().split(' ')
-						
+								procStat = sf.read().split(' ')	
+							sessID = procStat[5]
+							with open("/proc/"+sessID+"/environ") as env:
+								eRead = env.read().split('\0')
+							for line in eRead:
+									if 'DBUS_SESSION_BUS_ADDRESS' in line:
+										userSess = sessID
 							#convert relevant fields for CPU time to float
 							numlist = []
 							for i in procStat[13:17]:
 								numlist.append(float(i))
-						
 							userTime += sum(numlist)
 					except IOError:
 						logging.warning('Unable to get status of PID %s for user %s', process, subDir)
-
+							
+			if run == True:
+				
+				if memUsed >= (compTotal * .85):
+					logging.warning("%s memory usage critical! %s GB used!", subDir, hr)
+					uNew.hogs_usage[subDir] = memUsed
+					uNew.hogs_added[subDir] = count
+					if userSess != "0":
+						writeBuf = "CRITICAL: Memory usage greater than 85% of limit. " +hr+ \
+										 " of "+hrT+"GB used. Processes will be killed soon."
+						subprocess.Popen(["sh","/usr/bin/cgNotify.sh", writeBuf, userSess, userID], stdout=subprocess.PIPE)
+					
+				elif memUsed >= (compTotal * .75):
+					logging.info("%s past 75 percent of memlimit. %s GB used", subDir, hr)
+					uNew.hogs_usage[subDir] = memUsed
+					uNew.hogs_added[subDir] = count
+					if userSess != "0":
+						writeBuf = "WARNING: Memory usage greater than 75% of limit. " +hr+ \
+										 " of "+hrT+"GB used. If limit is reached, processes will die."
+						subprocess.Popen(["sh","/usr/bin/cgNotify.sh", writeBuf,  userSess, userID], stdout=subprocess.PIPE)
+					
+				elif memUsed >= (compTotal * .5):
+					logging.info("%s past 50 percent of memlimit. %s GB used", subDir, hr)
+					uNew.hogs_usage[subDir] = memUsed
+					uNew.hogs_added[subDir] = count
+					if userSess != "0":
+						writeBuf = "Notice: Memory usage greater than 50% of limit. " +hr+ \
+										 " of "+hrT+"GB used."				 
+						subprocess.Popen(["sh", "/usr/bin/cgNotify.sh", writeBuf, userSess, userID], stdout=subprocess.PIPE)
 			# Check to see if user is actually doing something.	by getting their CPU time
 			# as a fraction of total CPU time. 1.0 ~ 100% TOTAL cpu usage(not per-core like in top).
 			####################################################################################### 
@@ -282,8 +374,9 @@ def move(uOld):
 								curFile.write("100000")
 						except IOError:
 								logging.warning("Unable to write parameters to cgroup: %s", subDir)	
-
-								
+						
+						
+				
 				uNew.throttle[subDir] = tTime
 
 	return uNew
@@ -298,14 +391,14 @@ def main(argv):
 						datefmt='%m/%d/%Y %H:%M:%S')
 
 	global interval, verbose, infoMode, minUID, coreThreshold, totalMem, softMem, cGroupRoot, userQuota
-	global unassignedTasks, activityThreshold, maxNodes, maxNodes, cpusMax,totalCPUTime, oomPause
+	global unassignedTasks, activityThreshold, maxNodes, maxNodes, cpusMax,totalCPUTime, memHogs
 
 	ourPID = str(os.getpid())
 	signal.signal(signal.SIGINT, ctrlCHandler) #Listen for CTRL+C interrupt
 	verbose = False
 	infoMode = False
-	cfg = ConfigParser.RawConfigParser()
-	
+	cfg = ConfigParser.RawConfigParser()	
+
    	try:
 		cfg.read('/etc/cgroup_py.cfg')
 	except IOError:
@@ -320,7 +413,6 @@ def main(argv):
 		unassignedTasks = cGroupRoot + "tasks"
 		activityThreshold = (cfg.getfloat('main', 'activityThreshold')) / 100
 		interval = cfg.getfloat('main', 'interval')
-		oomPause = cfg.get('main', 'oomPause')
 	except ValueError:
 		logging.warning("Unexpected value in configuration file. Please ensure values are of correct type.")
 		sys.exit(2)
@@ -333,7 +425,19 @@ def main(argv):
 		logging.warning("Unable to parse task list for root CGroup with path: %s . Is CGroup service running?",
 						cGroupRoot)
 		sys.exit(2)
-
+	#remove existing groups from unclean shutdown
+	for each in os.listdir(cGroupRoot):
+		if 'UID' in each:
+			try:
+				with open(cGroupRoot+"/"+each+"/tasks") as cur:
+					ut = cur.read().splitlines()
+			except:
+				logging.warning("Couldn't clean up after "+each)
+			for each in ut:
+				with open(cGroupRoot+"/tasks", 'a') as cur:
+					print >>cur, each
+	time.sleep(2)			
+				
 	try:
 		opts, args = getopt.getopt(argv,"hvit:")
 	except getopt.GetoptError:
@@ -449,15 +553,19 @@ def main(argv):
 	time.sleep(interval)
 
 	usage = userData()
-
+#	badBoyz = memHogs()
+	tick = 0
 	# Main loop!
 	# loop forever until killed, sleeping for provided interval.
 	#############################################################
-	while True: 
+	while True:
+		if tick > 300:
+			tick = 0
 		totalCPUTime = getCPUTotal(totalCPUTime)
-		usage = move(usage)
+		usage = move(usage, tick)
+		tick += interval
 		time.sleep(interval)
-
+		
 	signal.pause()
 if __name__ == "__main__":
-   main(sys.argv[1:])
+	main(sys.argv[1:])
