@@ -34,6 +34,8 @@ update() {
 	cp cgOOMailer.py /usr/bin/cgOOMailer.py
 	chmod 755 /usr/bin/cgOOMailer.py
 	cp cgNotify.sh /usr/bin/cgNotify.sh
+	chmod 755 /usr/bin/cgNotify.sh
+	cp cgroup_OOMemail.txt /etc/cgroup_OOMemail.txt
 	#add to /etc/init.d
 	cp cgroup_py.sh /etc/rc.d/init.d/cgroup_py
 	chmod 755 /etc/rc.d/init.d/cgroup_py
@@ -56,6 +58,11 @@ install() {
 	chmod 755 $BINARYTARGET
 	cp cgroupClean.sh /usr/bin/cgroupClean.sh
 	chmod 755 /usr/bin/cgroupClean.sh
+	cp cgOOMailer.py /usr/bin/cgOOMailer.py
+	chmod 755 /usr/bin/cgOOMailer.py
+	cp cgNotify.sh /usr/bin/cgNotify.sh
+	chmod 755 /usr/bin/cgNotify.sh
+	cp cgroup_OOMemail.txt /etc/cgroup_OOMemail.txt
 	echo $"Copying config file to $CONFTARGET"
 	cp cgroup_py.cfg $CONFTARGET
 	chmod 644 $CONFTARGET
