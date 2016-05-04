@@ -27,6 +27,11 @@ PROG_DIR="/usr/bin"
 INTERVAL=5
 
 start() {	
+	cgconfstatus=$( /etc/init.d/cgconfig status )
+	if [ $cgconfstatus != "Running" ] ; then
+		echo "CGConfig not running!"
+		exit 1
+	fi
 	echo -n $"Starting $prog:"
 	cd $PROG_DIR
 	./cgroup_py &

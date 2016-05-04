@@ -41,7 +41,7 @@ def main ():
     
     while os.path.exists(sys.argv[1]):
         os.read(efd, 8)
-        ms = smtplib.SMTP('localhost')
+        ms = smtplib.SMTP('localhost', timeout=30)
         ms.sendmail(fAddress, toAddress, message.as_string())
         ms.quit()
 main()

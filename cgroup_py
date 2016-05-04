@@ -2,6 +2,8 @@
 
 ####################################################################################################
 # Script provided by Indiana University (UITS), Scientific Applications and Performance Tuning
+# Based on work by Rheinisch-Westfaelische Technische Hochschule - Aachen, Germany
+#
 # This script is designed to automatically assign tasks for any user on the system to
 # a cgroup for that specific UID (or creates one if it does not exist). Additionally, it
 # will dynamically reset limits and resource-quota-weighting depending on the system's
@@ -34,24 +36,27 @@ def ctrlCHandler(sig, frame):
 	logging.info("*************************************")
 	logging.info("* Interrupt received. Shutting down.")
 	logging.info("*************************************")
-	if os.path.exists(pidFile):
-		os.popen("rm -f " + pidFile)
 	for each in os.listdir(cGroupRoot):
 		uPids = list()
 		if 'UID' in each:
 			try:
-				with open(cGroupRoot+"/"+each+"/tasks") as cur:
-					uPids = cur.read().splitlines()
+				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'])
+
 			except:
-				logging.warning("Orphan Cgroup cannot be cleaned! %s", each)
-			
-			for each in uPids:
-				with open(cGroupRoot+"/tasks", "a") as cur:
-					try:
-						print >>cur, each
-					except IOError:
-						logging.info("Could not move process %s back to root cgroup.", each)
-					
+				pass		
+#				with open(cGroupRoot+"/"+each+"/tasks") as cur:
+#					uPids = cur.read().splitlines()
+#			except:
+#				logging.warning("Orphan Cgroup cannot be cleaned! %s", each)
+#			
+#			for each in uPids:
+#				with open(cGroupRoot+"/tasks", "a") as cur:
+#					try:
+#						print >>cur, each
+#					except IOError:
+#						logging.info("Could not move process %s back to root cgroup.", each)
+	if os.path.exists(pidFile):
+		os.popen("rm -f " + pidFile)				
 	sys.exit(0)
 
 # Get number of NUMA memory nodes (needed by cpuset.mems). 			    
@@ -429,14 +434,20 @@ def main(argv):
 	for each in os.listdir(cGroupRoot):
 		if 'UID' in each:
 			try:
-				with open(cGroupRoot+"/"+each+"/tasks") as cur:
-					ut = cur.read().splitlines()
+				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'])
+
 			except:
-				logging.warning("Couldn't clean up after "+each)
-			for each in ut:
-				with open(cGroupRoot+"/tasks", 'a') as cur:
-					print >>cur, each
-	time.sleep(2)			
+				pass	
+
+#			try:
+#				with open(cGroupRoot+"/"+each+"/tasks") as cur:
+#					ut = cur.read().splitlines()
+#			except:
+#				logging.warning("Couldn't clean up after "+each)
+#			for each in ut:
+#				with open(cGroupRoot+"/tasks", 'a') as cur:
+#					print >>cur, each
+#	time.sleep(2)			
 				
 	try:
 		opts, args = getopt.getopt(argv,"hvit:")
