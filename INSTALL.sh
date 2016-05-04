@@ -20,7 +20,6 @@ DATE=$(date +"%Y%m%d%H%M")
 FILES=('/usr/bin/cgroup_py' '/etc/init.d/cgroup_py' '/usr/bin/cgOOMailer.py' '/usr/bin/cgNotify.sh' '/usr/bin/cgroupClean.sh')
 
 update() {
-	echo ${#FILES[@]}
 	for i in ${FILES[*]};
 	do
 		rm -f $i
