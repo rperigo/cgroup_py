@@ -17,7 +17,7 @@ import os, sys, time, getopt, signal, subprocess, multiprocessing, decimal, Conf
 import logging
 
 pidFile = "/var/run/cgroup_py.pid"
-version = ".99-beta"
+version = "1.0"
 
 # Very simple class to hold data to be passed in and out of move() each run.
 ####################################################################################################
@@ -40,7 +40,7 @@ def ctrlCHandler(sig, frame):
 		uPids = list()
 		if 'UID' in each:
 			try:
-				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'], stdout=os.devnull)
+				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'])
 
 			except:
 				pass		
@@ -201,6 +201,9 @@ def move(uOld, count):
 		if 'UID' in subDir:
 			chkPath = cGroupRoot + subDir
 			userID = subDir.translate(None, 'UID')
+			getUname = subprocess.Popen(['getent', 'passwd', userID], stdout=subprocess.PIPE)
+			userName = subprocess.communicate()[0].split(':')[0]
+
 			with open(chkPath + '/tasks') as tf:
 				uPIDS = tf.read().splitlines()
 			try:
@@ -277,12 +280,6 @@ def move(uOld, count):
 						if tGroup == process:
 							with open(procFolder + '/stat') as sf:
 								procStat = sf.read().split(' ')	
-							sessID = procStat[5]
-							with open("/proc/"+sessID+"/environ") as env:
-								eRead = env.read().split('\0')
-							for line in eRead:
-									if 'DBUS_SESSION_BUS_ADDRESS' in line:
-										userSess = sessID
 							#convert relevant fields for CPU time to float
 							numlist = []
 							for i in procStat[13:17]:
@@ -297,28 +294,27 @@ def move(uOld, count):
 					logging.warning("%s memory usage critical! %s GB used!", subDir, hr)
 					uNew.hogs_usage[subDir] = memUsed
 					uNew.hogs_added[subDir] = count
-					if userSess != "0":
-						writeBuf = "CRITICAL: Memory usage greater than 85% of limit. " +hr+ \
-										 " of "+hrT+"GB used. Processes will be killed soon."
-						subprocess.Popen(["sh","/usr/bin/cgNotify.sh", writeBuf, userSess, userID], stdout=subprocess.PIPE)
+					writeBuf = "CRITICAL: Memory usage greater than 85% of limit. " +hr+ \
+									 " of "+hrT+"GB used. Processes will be killed soon."
+					subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writebuf], stdout=subprocess.PIPE)
 					
 				elif memUsed >= (compTotal * .75):
 					logging.info("%s past 75 percent of memlimit. %s GB used", subDir, hr)
 					uNew.hogs_usage[subDir] = memUsed
 					uNew.hogs_added[subDir] = count
-					if userSess != "0":
-						writeBuf = "WARNING: Memory usage greater than 75% of limit. " +hr+ \
-										 " of "+hrT+"GB used. If limit is reached, processes will die."
-						subprocess.Popen(["sh","/usr/bin/cgNotify.sh", writeBuf,  userSess, userID], stdout=subprocess.PIPE)
+					
+					writeBuf = "WARNING: Memory usage greater than 75% of limit. " +hr+ \
+									 " of "+hrT+"GB used. If limit is reached, processes will die."
+					subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
 					
 				elif memUsed >= (compTotal * .5):
 					logging.info("%s past 50 percent of memlimit. %s GB used", subDir, hr)
 					uNew.hogs_usage[subDir] = memUsed
 					uNew.hogs_added[subDir] = count
-					if userSess != "0":
-						writeBuf = "Notice: Memory usage greater than 50% of limit. " +hr+ \
-										 " of "+hrT+"GB used."				 
-						subprocess.Popen(["sh", "/usr/bin/cgNotify.sh", writeBuf, userSess, userID], stdout=subprocess.PIPE)
+					
+					writeBuf = "Notice: Memory usage greater than 50% of limit. " +hr+ \
+									 " of "+hrT+"GB used."				 
+					subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
 			# Check to see if user is actually doing something.	by getting their CPU time
 			# as a fraction of total CPU time. 1.0 ~ 100% TOTAL cpu usage(not per-core like in top).
 			####################################################################################### 
@@ -434,7 +430,7 @@ def main(argv):
 	for each in os.listdir(cGroupRoot):
 		if 'UID' in each:
 			try:
-				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'], stdout=os.devnull)
+				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'])
 
 			except:
 				pass	
