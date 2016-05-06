@@ -40,7 +40,7 @@ def ctrlCHandler(sig, frame):
 		uPids = list()
 		if 'UID' in each:
 			try:
-				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'])
+				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:%s' % each])
 
 			except:
 				pass		
@@ -429,7 +429,7 @@ def main(argv):
 	for each in os.listdir(cGroupRoot):
 		if 'UID' in each:
 			try:
-				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/UID500'])
+				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:%s' % each])
 
 			except:
 				pass	
