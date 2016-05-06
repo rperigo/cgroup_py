@@ -125,19 +125,7 @@
 
 	In testing, 5s or so is a good spot for a balance of performance
 	and reaction time.
-	
-
-	-------------------------------------------------------------------
-	oomPause = {True, False}
-	-------------------------------------------------------------------
-	Decides whether to enable the OOM killer if a user hits their mem
-	limit. USE WITH CAUTION, as if this is set to True, the OOM killer
-	will not run, and the user's processes will sleep until more mem is
-	available. The memory will remain allocated for that time. Default
-	is "False"
-
-	=========================================					with open(chkPath + "/memory.oom_control", "w" as curFile:
-						curFile.write("1")==========================
+	===================================================================
 
 
 	
@@ -161,7 +149,7 @@
 
 
 
-2) Running the script, and functionality
+2) Running the script
 
 	The script does not take much in the way of arguments. It can be
 	set to run at boot time via the included init script, or can be
@@ -184,8 +172,32 @@
 	===================================================================
 
 
-	2.1) Inner Workings
+3) Included Files and Inner Workings
 
+	3.1) INSTALL.sh
+	
+	Installation script. If run with no options, it assumes a fresh
+	installation, copying all scripts and default config files to
+	the correct locations. If the --update switch is supplied, only
+	script files will be copied, leaving existing system config un-
+	touched.
+
+	################################################################
+	
+	3.2) cgroup_py.sh (/etc/init.d/cgroup_py)
+	
+	Init.d script to control process start/stop. This script will 
+	also clean up external mail-notification processes and all user
+	cgroups on normal shutdown, as well as on startup. This ensures
+	that any orphan processes or data from a previous run uncleanly
+	terminated will not interfere. This is done via init script as 
+	attempting to control these processes while the main script was
+	still active proved buggy at best, so these were pushed to run
+	before/after cgroup_py is actually started.
+	
+	3.3) cgroup_py (/usr/bin/cgroup_py)
+	
+	
 	The script is pretty heavily commented as to how and why it does 
 	what it does, but a synopsis will be provided for completeness.
 
