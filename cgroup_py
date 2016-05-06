@@ -36,28 +36,6 @@ def ctrlCHandler(sig, frame):
 	logging.info("*************************************")
 	logging.info("* Interrupt received. Shutting down.")
 	logging.info("*************************************")
-#	for each in os.listdir(cGroupRoot):
-#		uPids = list()
-#		if 'UID' in each:
-#			try:
-#				for m in mailers:
-#					os.kill(m, 9)
-#				time.sleep(5)
-#				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/%s' % (each)])
-#
-#			except:
-#				pass		
-#				with open(cGroupRoot+"/"+each+"/tasks") as cur:
-#					uPids = cur.read().splitlines()
-#			except:
-#				logging.warning("Orphan Cgroup cannot be cleaned! %s", each)
-#			
-#			for each in uPids:
-#				with open(cGroupRoot+"/tasks", "a") as cur:
-#					try:
-#						print >>cur, each
-#					except IOError:
-#						logging.info("Could not move process %s back to root cgroup.", each)
 	if os.path.exists(pidFile):
 		os.popen("rm -f " + pidFile)				
 	sys.exit(0)
@@ -430,25 +408,7 @@ def main(argv):
 		logging.warning("Unable to parse task list for root CGroup with path: %s . Is CGroup service running?",
 						cGroupRoot)
 		sys.exit(2)
-
-	#remove existing groups from unclean shutdown
-	for each in os.listdir(cGroupRoot):
-		if 'UID' in each:
-			try:
-				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/%s' % each])
-
-			except:
-				pass	
-
-#			try:
-#				with open(cGroupRoot+"/"+each+"/tasks") as cur:
-#					ut = cur.read().splitlines()
-#			except:
-#				logging.warning("Couldn't clean up after "+each)
-#			for each in ut:
-#				with open(cGroupRoot+"/tasks", 'a') as cur:
-#					print >>cur, each
-#	time.sleep(2)			
+		
 				
 	try:
 		opts, args = getopt.getopt(argv,"hvit:")
