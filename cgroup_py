@@ -36,16 +36,17 @@ def ctrlCHandler(sig, frame):
 	logging.info("*************************************")
 	logging.info("* Interrupt received. Shutting down.")
 	logging.info("*************************************")
-	for each in os.listdir(cGroupRoot):
-		uPids = list()
-		if 'UID' in each:
-			try:
-				for each in mailers:
-					os.kill(each, 9)	
-				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:%s' % each])
-
-			except:
-				pass		
+#	for each in os.listdir(cGroupRoot):
+#		uPids = list()
+#		if 'UID' in each:
+#			try:
+#				for m in mailers:
+#					os.kill(m, 9)
+#				time.sleep(5)
+#				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/%s' % (each)])
+#
+#			except:
+#				pass		
 #				with open(cGroupRoot+"/"+each+"/tasks") as cur:
 #					uPids = cur.read().splitlines()
 #			except:
@@ -190,7 +191,7 @@ def move(uOld, count):
 							print >>curFile, p
 					except IOError:
 						logging.info("Unable to move PID: %s", p)
-						unew.igProcs[p] = sUID
+						uNew.igProcs[p] = sUID
 
 
 				
@@ -429,11 +430,12 @@ def main(argv):
 		logging.warning("Unable to parse task list for root CGroup with path: %s . Is CGroup service running?",
 						cGroupRoot)
 		sys.exit(2)
+
 	#remove existing groups from unclean shutdown
 	for each in os.listdir(cGroupRoot):
 		if 'UID' in each:
 			try:
-				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:%s' % each])
+				subprocess.Popen(['cgdelete', 'cpu,cpuacct,memory,cpuset:/%s' % each])
 
 			except:
 				pass	

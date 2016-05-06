@@ -9,6 +9,7 @@ def eventfd(init_val, flags):
     return libc.eventfd(init_val, flags)
 
 def main ():
+    run = True
     efd = eventfd(0,0)
     cge_c = os.open(sys.argv[1], os.O_WRONLY)
     cgo_c = os.open(sys.argv[2], os.O_RDONLY)
@@ -39,8 +40,11 @@ def main ():
 #     %s
 #     """ % (fAddress, ", ".join(toAddress), subject, msg)
     
-    while os.path.exists(sys.argv[1]):
-        os.read(efd, 8)
+	while os.path.exists(sys.argv[1]):
+#    while run == True:
+        if len(os.read(efd, 8)) != 8
+            print 'Bad Mem Descriptor!'
+            sys.exit(2)
         ms = smtplib.SMTP('localhost', timeout=30)
         ms.sendmail(fAddress, toAddress, message.as_string())
         ms.quit()

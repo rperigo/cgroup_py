@@ -25,6 +25,7 @@ RETVAL=0
 prog="cgroup_py"
 PROG_DIR="/usr/bin"
 INTERVAL=5
+CGROOT="/cgroup/karst"
 
 start() {	
 	cgconfstatus=$( /etc/init.d/cgconfig status )
@@ -32,6 +33,21 @@ start() {
 		echo "CGConfig not running!"
 		exit 1
 	fi
+	
+	#find and kill any OOM notifier processes hanging after an unclean
+	#shutdown
+	mpids=$( ps aux |grep '[/bin/cg]OOM' | tr -s ' ' | cut -d ' ' -f 2 )
+
+	for p in $mpids; do
+		kill -9 $p
+	done
+	sleep 2
+	CGroups=$( ls $CGROOT |grep 'UID' )
+
+	for g in $CGroups; do
+	cgdelete cpu,cpuset,cpuacct,memory:$g > /dev/null 2>&1
+	done
+
 	echo -n $"Starting $prog:"
 	cd $PROG_DIR
 	./cgroup_py &
@@ -40,11 +56,24 @@ start() {
 	echo
 }
 
-stop() {	
+stop() {
 	echo -n $"Stopping $prog:"
 	pkill -2 $prog
 	RETVAL=$?
 	[ "$RETVAL" = 0 ] && rm -f /var/lock/subsys/$prog
+
+	mpids=$( ps aux |grep '[/bin/cg]OOM' | tr -s ' ' | cut -d ' ' -f 2 )
+
+	for p in $mpids; do
+		kill -9 $p
+	done
+	sleep 2
+	CGroups=$( ls $CGROOT |grep 'UID' )
+
+	for g in $CGroups; do
+	cgdelete cpu,cpuset,cpuacct,memory:$g > /dev/null 2>&1
+	done
+
 	echo
 }
 
