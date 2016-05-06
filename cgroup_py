@@ -186,8 +186,7 @@ def move(uOld, count):
 							print >>curFile, p
 					except IOError:
 						logging.info("Unable to move PID: %s", p)
-						with open("/proc/"+p+"/status") as curFile:
-							uNew.igProcs[p] =  curFile.readline().split()[1]
+						unew.igProcs[p] = sUID
 
 
 				
