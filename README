@@ -172,7 +172,7 @@
 	===================================================================
 
 
-3) Included Files and Inner Workings
+3) Included Scripts and Inner Workings
 
 	3.1) INSTALL.sh
 	
@@ -237,7 +237,12 @@
 	in deciding whether to include a given user in calculations for
 	CPU limits, keeping "idle" users from artificially limiting those
 	who are actually using the system. This second sub-loop also
-	is responsible for setting limits on CPU time.
+	is responsible for setting limits on CPU time. A threshold is
+	provided by the configuration file to determine which users are
+	to be considered active. As the total available CPU time is
+	evenly divided amongst the "active" users in setting limits,
+	this threshold value can have a very noticeable effect on how
+	limits are enforced. 
 
 	This functionality is in the second stage of the function to avoid
 	users being artificially kept at low limits after others have left.
@@ -245,3 +250,52 @@
 	list, limits could only be changed for a user if they spawned a new
 	process, so this functionality was changed - requiring a second for
 	loop but providing much better control over limits.
+	
+	Additionally, the latter stage of the move() function provides
+	a mechanism for notifying desktop users if their memory usage
+	is elevated. This is accomplished via a built-in command of
+	the ThinLinc client called tl-notify. This command seems to
+	pipe a message via notify-send to whichever user is given as
+	an argument, but takes care of the hard work of ensuring the
+	message only goes to that user.
+	
+	It IS possible to do this with a custom-built function in
+	the case that ThinLinc is not being used. 
+	This was mostly functional at onep oint within the script, 
+	however the required logic to get the user's correct DBUS 
+	session ID while ignoring CLI users was not quite finished 
+	before moving to tl-notify. 
+
+	3.4) cgOOMailer.py
+	
+	This script is responsible for tracking each CGroup's OOM state.
+	If an OOM event is detected (more on this in a bit), the script
+	sends an email to notify the user, as well as a message to 
+	desktop-alerts-l@list.iu.edu noting the user that went OOM as
+	well as the node on which they were running. Additionally, a
+	line is parsed into /var/log/cgroup_py.log on the affected
+	node with a timestamp and the user's information.
+	
+	This script accomplishes this by writing the path to $CGROUP's OOM
+	control file to $CGROUP/cgroup.event_control, and setting up an 
+	event file descriptor reading $CGROUP/cgroup.event_control. When 
+	a cgroup goes OOM, a byte is changed in $CGROUP/memory.oom_control,
+	which causes a change in the eventfd being read by cgOOMailer.py.
+	
+	When this change is detected, the emails are fired off.
+	
+	Due to inadvertent emails being sent in some cases where cgroup_py
+	was killed externally and then restarted, the init script was
+	updated to ensure any instances of cgOOMailer.py are killed on
+	service start/stop.
+	
+	There is one instance of this script instanced per user CGroup.
+	
+	3.5) cgroupClean.sh
+	
+	Simple shell script called by the cgroup system's "Notify_On_Release"
+	function. When a user logs out and all of their tasks are cleared,
+	this script is called to rm their cgroup. No effect on calculations
+	for how to divide CPU usage, however it can save a few extra steps
+	as we wouldn't need to iterate through that folder any longer to get
+	processes.
