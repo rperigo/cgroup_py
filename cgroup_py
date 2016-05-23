@@ -134,7 +134,7 @@ def move(uOld, count):
 			if sUID == uOld.igProcs[p]:
 				uNew.igProcs[p] = uOld.igProcs[p]
 			else:
-				pass
+				continue
 		else:
 		# Apply new processes to per-user CGroups prefaced with "UID"
 			if uid >= minUID:
@@ -158,7 +158,7 @@ def move(uOld, count):
 					with open(chkPath + "/cpuset.mems", "w") as curFile:
 						curFile.write("0-"+maxNodes)
 					with open(chkPath + "/cpuset.cpus", "w") as curFile:
-						curFile.write("0-"+cpusMax)
+						curFile.write("2-"+cpusMax)
 				except IOError:
 					pass
 
@@ -174,7 +174,6 @@ def move(uOld, count):
 					if not p in uOld.igProcs.keys():
 						logger.info("Unable to move PID: %s", p)
 					uNew.igProcs[p] = sUID
-
 
 				
 	# Iterate through user folders, write params to user cgroup.
@@ -196,7 +195,7 @@ def move(uOld, count):
 				with open(chkPath + "/cpuset.mems", "w") as curFile:
 						curFile.write("0-"+maxNodes)
 				with open(chkPath + "/cpuset.cpus", "w") as curFile:
-						curFile.write("0-"+cpusMax)
+						curFile.write("2-"+cpusMax)
 				with open(chkPath + "/memory.soft_limit_in_bytes", "w") as curFile:
 						curFile.write(softMem)
 				with open(chkPath + "/memory.limit_in_bytes", "w") as curFile:
@@ -338,40 +337,16 @@ def move(uOld, count):
 
 				if subDir in uOld.throttle:
 					shouldThrottle = tTime - uOld.throttle[subDir]
-					#check server load first against our "line in the sand" threshold.
-					if totalCPUTime[2] >= thresh:
 
-
-						if (shouldThrottle > 0 or tTime > 1000000000):
-							try:	
-								with open(chkPath + "/cpu.shares", "w") as curFile:
-									curFile.write(str(1024 / (4 * activeU)))
-								with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
-									curFile.write(str(int(floatQuota/(4 * activeU))))
-								with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
-									curFile.write("100000")
-							except IOError:
-								logger.warning("Unable to write parameters to cgroup: %s", subDir)	
-						else:
-							try:
-								with open(chkPath + "/cpu.shares", "w") as curFile:
-									curFile.write("1024")
-								with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
-									curFile.write(str(int(floatQuota * .5)))
-								with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
-									curFile.write("100000")
-							except IOError:
-								logger.warning("Unable to write parameters to cgroup: %s", subDir)	
-					else:
-						try:
-							# Ensure CPU shares are equalized so that processes don't trip over eachother.
-							with open(chkPath + "/cpu.shares", "w") as curFile:
-								curFile.write("1024")
-							with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
-								curFile.write(str(int(floatQuota / activeU)))
-							with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
-								curFile.write("100000")
-						except IOError:
+					try:
+						# Ensure CPU shares are equalized so that processes don't trip over eachother.
+						with open(chkPath + "/cpu.shares", "w") as curFile:
+							curFile.write("1024")
+						with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
+							curFile.write(str(int(floatQuota / activeU)))
+						with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
+							curFile.write("100000")
+					except IOError:
 								logger.warning("Unable to write parameters to cgroup: %s", subDir)	
 						
 						
@@ -513,7 +488,7 @@ def main(argv):
 	fMem = getMemNodes()
 
 	# Get maximum value(microseconds) for cpu quota action.
-	maxCPUQuota = int(c * 100000)
+	maxCPUQuota = int((c-2)  * 100000)
 
 	# set a per-user quota in microseconds as a fraction of total
 	userQuota = str(int(coreThreshold * maxCPUQuota))
