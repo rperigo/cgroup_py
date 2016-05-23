@@ -39,7 +39,7 @@ start() {
 	mpids=$( ps aux |grep '[/bin/cg]OOM' | tr -s ' ' | cut -d ' ' -f 2 )
 
 	for p in $mpids; do
-		kill -9 $p
+		kill -15 $p
 	done
 	sleep 2
 	CGroups=$( ls $CGROOT |grep 'UID' )
@@ -65,7 +65,7 @@ stop() {
 	mpids=$( ps aux |grep '[/bin/cg]OOM' | tr -s ' ' | cut -d ' ' -f 2 )
 
 	for p in $mpids; do
-		kill -9 $p
+		kill -15 $p
 	done
 	sleep 2
 	CGroups=$( ls $CGROOT |grep 'UID' )
