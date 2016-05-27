@@ -19,9 +19,9 @@ uid=$( echo $1 | tr -d '/' | tr -d [A-z][a-z])
 #use that to get this user's OOM mailer process and kill it. This is
 #necessary since just removing their Cgroup directory can cause
 #unintended OOM warning emails.
-getOOMProc=$( ps aux |grep '[/bin/cg]OOM' | grep 501 | tr -s ' ' |cut -d ' ' -f 2 )
+getOOMProc=$( ps aux |grep '[/bin/cg]OOM' | grep $uid | tr -s ' ' |cut -d ' ' -f 2 )
 kill -15 $getOOMProc
 
 #now that we've killed their mailer and nobody's watching their eventFD...
 rmdir $CGROUPROOT$1
-echo "$DSTAMP User $1 no longer has running processes. Removing CGroup." >> /var/log/cgroup_py.log
+echo "$DSTAMP User $uid no longer has running processes. Removing CGroup." >> /var/log/cgroup_py.log
