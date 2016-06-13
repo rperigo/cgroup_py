@@ -196,8 +196,12 @@ def move(uOld, count):
 						curFile.write("0-"+maxNodes)
 				with open(chkPath + "/cpuset.cpus", "w") as curFile:
 						curFile.write("2-"+cpusMax)
+				with open(chkPath + "/cpu.shares", "w") as curFile:
+							curFile.write("1024")
+				with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
+						curFile.write("100000")
 				with open(chkPath + "/memory.soft_limit_in_bytes", "w") as curFile:
-						curFile.write(softMem)
+						curFile.write(softMem)		
 				with open(chkPath + "/memory.limit_in_bytes", "w") as curFile:
 						curFile.write(totalMem)
 				#disable swap. This will force processes to OOM-kill when the user's memlimit is reached.
@@ -298,17 +302,6 @@ def move(uOld, count):
 					except:
 						logger.warning("Unable to notify user of memory issue. Possibly a CLI login.")
 
-#RM lowest nag for memory usage (50 percent)
-#				elif memUsed >= (compTotal * .5):
-#					logger.info("%s past 50 percent of memlimit. %s GB used", subDir, hr)
-#					uNew.hogs_usage[subDir] = memUsed
-#					
-#					writeBuf = "Notice: Memory usage greater than 50% of limit. " +hr+ \
-#									 " of "+hrT+"GB used."
-#					try:
-#						subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
-#					except:
-#						logger.warning("Unable to notify user of memory issue. Possibly a CLI login.")
 
 			# Check to see if user is actually doing something.	by getting their CPU time
 			# as a fraction of total CPU time. 1.0 ~ 100% TOTAL cpu usage(not per-core like in top).
@@ -324,30 +317,26 @@ def move(uOld, count):
 			######################################################################################
 			if uPercent > activityThreshold:
 	
-				#open the cgroup (UID) cpu.stat file to see if this user is already being throttled
-				try:
-					with open(chkPath + "/cpu.stat", "r") as curFile:
-						getThrottleData = curFile.read().splitlines()
-				except IOError:
-					continue
-				#split down to just "throttled time"
-				getThrottleData = getThrottleData[2].split(' ')
-				tTime = float(getThrottleData[1])
-				activeU = len(uOld.throttle)
+			# 	#open the cgroup (UID) cpu.stat file to see if this user is already being throttled
+			 	try:
+			 		with open(chkPath + "/cpu.stat", "r") as curFile:
+			 			getThrottleData = curFile.read().splitlines()
+			 	except IOError:
+			 		continue
+			 	#split down to just "throttled time"
+			 	getThrottleData = getThrottleData[2].split(' ')
+			 	tTime = float(getThrottleData[1])
+			 	activeU = len(uOld.throttle)
 
-				if subDir in uOld.throttle:
-					shouldThrottle = tTime - uOld.throttle[subDir]
+			 	if subDir in uOld.throttle:
+			 		shouldThrottle = tTime - uOld.throttle[subDir]
 
-					try:
-						# Ensure CPU shares are equalized so that processes don't trip over eachother.
-						with open(chkPath + "/cpu.shares", "w") as curFile:
-							curFile.write("1024")
-						with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
-							curFile.write(str(int(floatQuota / activeU)))
-						with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
-							curFile.write("100000")
-					except IOError:
-								logger.warning("Unable to write parameters to cgroup: %s", subDir)	
+			 		try:
+			 			with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
+			 				curFile.write(str(int(floatQuota / activeU)))
+
+			 		except IOError:
+			 					logger.warning("Unable to write CPU quota to cgroup: %s", subDir)	
 						
 						
 				
@@ -430,8 +419,8 @@ def main(argv):
 		# make sane if needed
 
 	# Setup for memory limit, enabling charge_on_migration:
-	with open(cGroupRoot + "memory.move_charge_at_immigrate", "w") as curFile:
-		curFile.write(str(1))
+	#with open(cGroupRoot + "memory.move_charge_at_immigrate", "w") as curFile:
+#		curFile.write(str(1))
 
 	# check values for sanity
 	if (coreThreshold < .1 or coreThreshold > .98):
@@ -456,13 +445,32 @@ def main(argv):
 		"Interval must be greater than zero. Exiting."
 		sys.exit(2)
 	
-	# Use notify_on_release to run a simple .sh script to unload empty (e.g. logged-out)
-	# user cgroups. This should keep things cleaner and limit un-necessary loops a bit
-	with open(cGroupRoot + "notify_on_release", "w") as curFile:
-		curFile.write('1')
 
-	with open(cGroupRoot + "release_agent", "w") as curFile:
-		curFile.write('/usr/bin/cgroupClean.sh')
+	# Magic Block - DO NOT REMOVE. Things will break, I don't know why.
+	# Ok, I *think* I know why, at least - 
+		# We ran into an intermittent crashiness issue once into
+		# semi-production with these scripts. After much trial and
+		# error and ferocious googling, I was able to pin it with some 
+		# confidence on the built-in notify_on_release bit of [cgroup].
+
+		# I'd need to check the kernel source to see exactly how it works,
+		# but my thinking is that this is using an eventfd on
+		# the cgroup's task list, watching to see if it 
+		# empties out completely. Once this occurs, it calls whatever is
+		# listed in "release_agent" to do things. In theory this allows us 
+		# to automatically clean up empty cgroups and keep the root
+		# hierarchy looking nice and tidy, but appears to have some bugs
+		# in older kernels.
+
+		# Furthermore, it would appear that this was hitting some kind
+		# of race condition in certain situations, causing
+		# system-wide issues as I/O backed up.
+
+	with open(cGroupRoot + "notify_on_release", "w") as curFile:
+		curFile.write('0')
+	
+	# END Magic Block
+	##################
 
 	# Do we exist?
 	if os.path.exists(pidFile) != True:
@@ -523,7 +531,6 @@ def main(argv):
 	time.sleep(interval)
 
 	usage = userData()
-#	badBoyz = memHogs()
 	tick = 0
 	# Main loop!
 	# loop forever until killed, sleeping for provided interval.
