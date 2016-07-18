@@ -22,72 +22,127 @@ version = "1.0"
 # Very simple class to hold data to be passed in and out of move() each run.
 ####################################################################################################
 class userData:
-	def __init__(self):
-		self.throttle = dict()
-		self.uTime = dict()
-		self.igProcs = dict()
+    def __init__(self):
+        self.throttle = dict()
+        self.uTime = dict()
+        self.igProcs = dict()
 #		self.hogs = memHogs()
-		self.hogs_usage = dict()
-		self.hogs_added = dict()
+        self.hogs_usage = dict()
+        self.hogs_added = dict()
 
 # Simple handler function to listen for an interrupt and respond appropriately.
 ####################################################################################################
 def ctrlCHandler(sig, frame): 
-	logger.info("*************************************")
-	logger.info("* Interrupt received. Shutting down.")
-	logger.info("*************************************")
-	if os.path.exists(pidFile):
-		os.popen("rm -f " + pidFile)				
-	sys.exit(0)
+    logger.info("*************************************")
+    logger.info("* Interrupt received. Shutting down.")
+    logger.info("*************************************")
+    if os.path.exists(pidFile):
+        os.popen("rm -f " + pidFile)				
+    sys.exit(0)
 
 # Get number of NUMA memory nodes (needed by cpuset.mems). 			    
 ####################################################################################################
 def getMemNodes():
-	lscpu = subprocess.Popen(['lscpu'], stdout=subprocess.PIPE)
-	grep = subprocess.Popen(['grep', "NUMA node(s)"],
-				stdout=subprocess.PIPE,
-				stdin=lscpu.stdout)
-	cut = subprocess.Popen(['cut', '-d', ':', '-f', '2'],
-				stdout=subprocess.PIPE,
-				stdin=grep.stdout)
-	grep2 = subprocess.Popen(['grep', '-o', "[0-9]\+"],
-				stdout=subprocess.PIPE, 
-				stdin=cut.stdout)
-	finalMems = subprocess.Popen(['tr', '-d', '\n'],
-				stdout=subprocess.PIPE, 
-				stdin=grep2.stdout)
-	fMems = finalMems.communicate()[0]
+    lscpu = subprocess.Popen(['lscpu'], stdout=subprocess.PIPE)
+    grep = subprocess.Popen(['grep', "NUMA node(s)"],
+                stdout=subprocess.PIPE,
+                stdin=lscpu.stdout)
+    cut = subprocess.Popen(['cut', '-d', ':', '-f', '2'],
+                stdout=subprocess.PIPE,
+                stdin=grep.stdout)
+    grep2 = subprocess.Popen(['grep', '-o', "[0-9]\+"],
+                stdout=subprocess.PIPE, 
+                stdin=cut.stdout)
+    finalMems = subprocess.Popen(['tr', '-d', '\n'],
+                stdout=subprocess.PIPE, 
+                stdin=grep2.stdout)
+    fMems = finalMems.communicate()[0]
 
-	return fMems
+    return fMems
 
 # Function to get total *ACTIVE* system CPU time out of /proc/stat
 ####################################################################################################
 def getCPUTotal(oldValues):
-	with open('/proc/stat') as s:
-		procstat = s.read().splitlines()
+    with open('/proc/stat') as s:
+        procstat = s.read().splitlines()
 
-	cpu = procstat[0].split(' ')
-	tempint = []
-	for field in cpu[2:10]:
-		tempint.append(float(field))
-	activeTime = 0
-	totalTime = 0
-	totalChange = 0
-	for i in (0,2,4):
-		activeTime +=tempint[i]
-	totalTime = activeTime + tempint[3]
-	totalChange = totalTime-oldValues[1]
-	cpuPCT = (activeTime - oldValues[0]) / totalChange
-	
-	oldValues[0] = activeTime
-	oldValues[1] = totalTime
-	oldValues[2] = cpuPCT
-	oldValues[3] = totalChange
+    cpu = procstat[0].split(' ')
+    tempint = []
+    for field in cpu[2:10]:
+        tempint.append(float(field))
+    activeTime = 0
+    totalTime = 0
+    totalChange = 0
+    for i in (0,2,4):
+        activeTime +=tempint[i]
+    totalTime = activeTime + tempint[3]
+    totalChange = totalTime-oldValues[1]
+    cpuPCT = (activeTime - oldValues[0]) / totalChange
+    
+    oldValues[0] = activeTime
+    oldValues[1] = totalTime
+    oldValues[2] = cpuPCT
+    oldValues[3] = totalChange
 
-	return oldValues
+    return oldValues
 
-	
+# cliMsg()
+# Quick function to get a user's tty and write the
+# specified message buffer to them directly. Useful
+# to notify a user without an active Thinlinc session
 
+def cliMsg(uName, msgBuffer):
+
+    tty=''
+    w = subprocess.Popen(['w'], stdout=subprocess.PIPE).communicate()[0].splitlines()
+
+    for each in w:
+        ent = each.split()
+        if uName == ent[0]:
+            
+            if 'pts' in ent[1]:
+                tty = ent[1]
+                break
+    else:
+        return 'Unable to get user TTY'
+    
+    a = subprocess.Popen(['echo', msgBuffer], stdout=subprocess.PIPE)
+    try:
+        subprocess.check_call(['write', uName, tty], stdin=a.stdout)
+        return 0
+    except subprocess.CalledProcessError as e:
+        return e
+
+def findCGRoot():
+    cgroot = ''
+    cgMounts = list()
+    try:
+        with open('/proc/mounts') as mounts:
+            mountpoints = mounts.readlines()
+    except (IOError, OSError) as e:
+        print >> sys.stderr, 'Unable to parse system mount points. Cannot determine CGRoot'
+        logger.error('Unable to find system mounts, cannot determine CGRoot')
+        return ''
+    
+    # get cgMounts
+    for l in mountpoints:
+        if 'cgroup' in l:
+            cgMounts.append(l)
+            
+    if not cgMounts:
+        print >> sys.stderr, 'Cannot find existing CGroup mount. Is CGroups enabled in your kernel?'
+        logger.error('Cannot find existing CGroup mount. Is CGroups enabled in your kernel?')
+        return ''
+
+    # parse cgmounts to get setup (e.g. individual hieararchies, or one big root hierarchy)
+    for m in cgMounts:
+        if all(c in m for c in ('cpuset', 'memory', 'cpuacct')):
+            return m.split()[1]
+        elif 'cpu' in m:
+            tmpRoot = m.split()[1].split('/')
+            tmpRoot.pop()
+            tmpRoot = '/'.join(tmpRoot)
+            return tmpRoot
 
 #####################################################################################################				
 # The real meat of this script - the move() function. 
@@ -99,450 +154,472 @@ def getCPUTotal(oldValues):
 # time / sets limits accordingly.
 #####################################################################################################
 def move(uOld, count):
-	userSess = "0"
-	oldHogs_added = dict()
-	oldHogs_usage = dict()
-	if count != 0:
-		oldHogs_added = uOld.hogs_added.copy()
-		oldHogs_usage = uOld.hogs_usage.copy()
-	run = False
-	memUsed = 0
-	with open(unassignedTasks) as f:
-		pids = f.read().splitlines() 		
-	floatQuota = float(userQuota)
-	shouldThrottle = 0
-	thresh = coreThreshold + .2
-	sessID = ""
-	uNew = userData() 
+    userSess = "0"
+    oldHogs_added = dict()
+    oldHogs_usage = dict()
+    if count != 0:
+        oldHogs_added = uOld.hogs_added.copy()
+        oldHogs_usage = uOld.hogs_usage.copy()
+    run = False
+    memUsed = 0
+    with open(unassignedTasks) as f:
+        pids = f.read().splitlines() 		
+    floatQuota = float(userQuota)
+    shouldThrottle = 0
+    thresh = coreThreshold + .2
+    sessID = ""
+    uNew = userData() 
 
-	for p in pids:
-
-
-		#Grab UID out of proc/PID/stat or skip
-		#if that file went away
-		try:
-			procFile = os.stat("/proc/" + p)
-		except:
-			continue
-
-		uid = procFile[4]
-		sUID = str(uid)
-		
-		if verbose == True:	
-			print "Processing task PID: " +  p + " for user: " +sUID
-		if p in uOld.igProcs:
-			if sUID == uOld.igProcs[p]:
-				uNew.igProcs[p] = uOld.igProcs[p]
-			else:
-				continue
-		else:
-		# Apply new processes to per-user CGroups prefaced with "UID"
-			if uid >= minUID:
-				chkPath = cGroupRoot + "UID" + sUID
-				isPath = os.path.exists(chkPath)
-				if isPath != True:
-					try:						
-						os.mkdir(chkPath, 0700)
-						os.chown(chkPath, uid, -1)
-						logger.info("Setting up OOM monitor for UID %s", sUID)
-						mPid = subprocess.Popen(['python', '/usr/bin/cgOOMailer.py', chkPath+'/cgroup.event_control', chkPath+'/memory.oom_control', sUID]).pid
-						if not mPid in mailers:
-							mailers.append(mPid)
-					except:
-						logger.warning("Unable to create CGroup directory for %s.", sUID)
-					else:
-						logger.info("Successfully registered user %s with new cgroup.", sUID)
-
-				#init needed files and move task
-				try:
-					with open(chkPath + "/cpuset.mems", "w") as curFile:
-						curFile.write("0-"+maxNodes)
-					with open(chkPath + "/cpuset.cpus", "w") as curFile:
-						curFile.write("2-"+cpusMax)
-				except IOError:
-					pass
-
-				# move tasks - try / catch to resolve breakage when trying to move realtime
-				# processes (namely pulseaudio's threads). Leaving RT procs in system (root cgroup)
-				# as RT process scheduling within cgroups adds weirdness.
-				#
-				# Also add PID to list of procs to ignore as a measure to combat spam to STDOUT/logs.  
-				try:
-					with open(chkPath + "/tasks", "a") as curFile:
-						print >>curFile, p
-				except IOError:
-					if not p in uOld.igProcs.keys():
-						logger.info("Unable to move PID: %s", p)
-					uNew.igProcs[p] = sUID
-
-				
-	# Iterate through user folders, write params to user cgroup.
-	# This is done as a separate loop to add better control over
-	# resources - doing it in one shot would rely on a user spawning
-	# new processes in order to have their limits adjusted.
-	###########################################################
-	for subDir in os.listdir(cGroupRoot):
-		
-		if 'UID' in subDir:
-			chkPath = cGroupRoot + subDir
-			userID = subDir.translate(None, 'UID')
-			getUname = subprocess.Popen(['getent', 'passwd', userID], stdout=subprocess.PIPE)
-			userName = getUname.communicate()[0].split(':')[0]
+    for p in pids:
 
 
-			try:
-				# Ensure that static values are good each run
-				with open(chkPath + "/cpuset.mems", "w") as curFile:
-						curFile.write("0-"+maxNodes)
-				with open(chkPath + "/cpuset.cpus", "w") as curFile:
-						curFile.write("2-"+cpusMax)
-				with open(chkPath + "/cpu.shares", "w") as curFile:
-							curFile.write("1024")
-				with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
-						curFile.write("100000")
-				with open(chkPath + "/memory.soft_limit_in_bytes", "w") as curFile:
-						curFile.write(softMem)		
-				with open(chkPath + "/memory.limit_in_bytes", "w") as curFile:
-						curFile.write(totalMem)
-				#disable swap. This will force processes to OOM-kill when the user's memlimit is reached.
-				with open(chkPath + "/memory.memsw.limit_in_bytes", "w") as curFile:
-						curFile.write(totalMem)
-				with open(chkPath+"/memory.memsw.usage_in_bytes") as curF:
-					memUsed = float(curF.read())
-			except IOError:
-				logger.warning("Unable to write parameters to cgroup: %s", subDir)	
-			
-			#Get tasks for this user - if the file has gone
-			#away (e.g they logged out), break out and skip this user.
-			try:
-				with open(chkPath + '/tasks') as tf:
-					uPIDS = tf.read().splitlines()
-			except IOError:
-				continue
-			
-			hr = '{0:.2g}'.format(memUsed / 1073741824)
-			compTotal = float(totalMem)
-			hrT = str(compTotal / 1073741824)
-			if not subDir in oldHogs_added:
-				uNew.hogs_added[subDir] = count
-				uNew.hogs_usage[subDir] = memUsed
-				run = True
-			else: 
-				martin = uOld.hogs_added[subDir]
-				will = uOld.hogs_usage[subDir]
-				if (count - martin) > 299:
-					run = True
-				elif ((memUsed - will)/compTotal) > .10 and (count - martin) > 60:
-					run = True
-				else: 
-					run = False
-					uNew.hogs_added[subDir] = martin
-					uNew.hogs_usage[subDir] = will
+        #Grab UID out of proc/PID/stat or skip
+        #if that file went away
+        try:
+            procFile = os.stat("/proc/" + p)
+        except:
+            continue
 
-			userTime = 0
-			userDelta = 0
-			uPercent = 0
-			for process in uPIDS:
-				procFolder = '/proc/' + process
-				
+        uid = procFile[4]
+        sUID = str(uid)
+        
+        if verbose == True:	
+            print "Processing task PID: " +  p + " for user: " +sUID
+        if p in uOld.igProcs:
+            if sUID == uOld.igProcs[p]:
+                uNew.igProcs[p] = uOld.igProcs[p]
+            else:
+                continue
+        else:
+        # Apply new processes to per-user CGroups prefaced with "UID"
+            if uid >= minUID:
+                chkPath = cGroupRoot + "UID" + sUID
+                isPath = os.path.exists(chkPath)
+                if isPath != True:
+                    try:						
+                        os.mkdir(chkPath, 0700)
+                        os.chown(chkPath, uid, -1)
+                        logger.info("Setting up OOM monitor for UID %s", sUID)
+                        mPid = subprocess.Popen(['python', '/usr/bin/cgOOMailer.py', chkPath+'/cgroup.event_control', chkPath+'/memory.oom_control', sUID]).pid
+                        if not mPid in mailers:
+                            mailers.append(mPid)
+                    except:
+                        logger.warning("Unable to create CGroup directory for %s.", sUID)
+                    else:
+                        logger.info("Successfully registered user %s with new cgroup.", sUID)
 
-				# Get process CPU usage, add to user's tallclass memHogs:
-				###########################################
-				if os.path.exists(procFolder):
-					
-					# This bit opens both proc/pid/stat and /status
-					# BOTH are necessary. It was discovered that even if a pid
-					# is actually a thread of another process (and has no /proc/pid)
-					# that folder can still be seen and read from, causing
-					# hyper-inflated usage values for users running threaded apps.
-					try:		
-						with open(procFolder + '/status') as f:
-							status = f.read().splitlines()
-					except IOError:
-						logger.warning('Unable to get status of PID %s for user %s', process, subDir)
-						continue
+                #init needed files and move task
+                try:
+                    with open(chkPath + "/cpuset.mems", "w") as curFile:
+                        curFile.write("0-"+maxNodes)
+                    with open(chkPath + "/cpuset.cpus", "w") as curFile:
+                        curFile.write("%s-%s" % (reservedCores, cpusMax))
+                except IOError:
+                    pass
 
-					getTGroup = status[2].split(':')
-					tGroup = getTGroup[1].strip()
-					if tGroup == process:
-						try:
-							with open(procFolder + '/stat') as sf:
-								procStat = sf.read().split(' ')	
-							#convert relevant fields for CPU time to float
-							numlist = []
-							for i in procStat[13:17]:
-								numlist.append(float(i))
-							userTime += sum(numlist)
-						except IOError:
-							logger.warning('Unable to get status of PID %s for user %s', process, subDir)
+                # move tasks - try / catch to resolve breakage when trying to move realtime
+                # processes (namely pulseaudio's threads). Leaving RT procs in system (root cgroup)
+                # as RT process scheduling within cgroups adds weirdness.
+                #
+                # Also add PID to list of procs to ignore as a measure to combat spam to STDOUT/logs.  
+                try:
+                    with open(chkPath + "/tasks", "a") as curFile:
+                        print >>curFile, p
+                except IOError:
+                    if not p in uOld.igProcs.keys():
+                        logger.info("Unable to move PID: %s", p)
+                    uNew.igProcs[p] = sUID
 
-							
-			if run == True:
-				
-				if memUsed >= (compTotal * .85):
-					logger.warning("%s memory usage critical! %s GB used!", subDir, hr)
-					uNew.hogs_usage[subDir] = memUsed
-					uNew.hogs_added[subDir] = count
-					writeBuf = "CRITICAL: Memory usage greater than 85% of limit. " +hr+ \
-									 " of "+hrT+"GB used. Processes will be killed soon."
-					try:
-						subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
-					except:
-						logger.warning("Unable to notify user of memory issue. Possibly a CLI login.")
-
-				elif memUsed >= (compTotal * .75):
-					logger.info("%s past 75 percent of memlimit. %s GB used", subDir, hr)
-					uNew.hogs_usage[subDir] = memUsed
-					uNew.hogs_added[subDir] = count
-					
-					writeBuf = "WARNING: Memory usage greater than 75% of limit. " +hr+ \
-									 " of "+hrT+"GB used. If limit is reached, processes will die."
-					try:
-						subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
-					except:
-						logger.warning("Unable to notify user of memory issue. Possibly a CLI login.")
+                
+    # Iterate through user folders, write params to user cgroup.
+    # This is done as a separate loop to add better control over
+    # resources - doing it in one shot would rely on a user spawning
+    # new processes in order to have their limits adjusted.
+    ###########################################################
+    for subDir in os.listdir(cGroupRoot):
+        
+        if 'UID' in subDir:
+            chkPath = cGroupRoot + subDir
+            userID = subDir.translate(None, 'UID')
+            getUname = subprocess.Popen(['getent', 'passwd', userID], stdout=subprocess.PIPE)
+            userName = getUname.communicate()[0].split(':')[0]
 
 
-			# Check to see if user is actually doing something.	by getting their CPU time
-			# as a fraction of total CPU time. 1.0 ~ 100% TOTAL cpu usage(not per-core like in top).
-			####################################################################################### 
-			if subDir in uOld.uTime:
-				userDelta = userTime - uOld.uTime[subDir]
-				uPercent = userDelta / totalCPUTime[3]
-			
-			uNew.uTime[subDir] = userTime
+            try:
+                # Ensure that static values are good each run
+                with open(chkPath + "/cpuset.mems", "w") as curFile:
+                        curFile.write("0-"+maxNodes)
+                with open(chkPath + "/cpuset.cpus", "w") as curFile:
+                        curFile.write("2-"+cpusMax)
+                with open(chkPath + "/cpu.shares", "w") as curFile:
+                            curFile.write("1024")
+                with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
+                        curFile.write("100000")
+                with open(chkPath + "/memory.soft_limit_in_bytes", "w") as curFile:
+                        curFile.write(softMem)		
+                with open(chkPath + "/memory.limit_in_bytes", "w") as curFile:
+                        curFile.write(totalMem)
+                #disable swap. This will force processes to OOM-kill when the user's memlimit is reached.
+                with open(chkPath + "/memory.memsw.limit_in_bytes", "w") as curFile:
+                        curFile.write(totalMem)
+                with open(chkPath+"/memory.memsw.usage_in_bytes") as curF:
+                    memUsed = float(curF.read())
+            except IOError as e:
+                logger.warning("Unable to write parameters to cgroup: %s", subDir)	
+                logger.warning("Associated error: %s", e)
+            #Get tasks for this user - if the file has gone
+            #away (e.g they logged out), break out and skip this user.
+            try:
+                with open(chkPath + '/tasks') as tf:
+                    uPIDS = tf.read().splitlines()
+            except IOError:
+                continue
+            
+            hr = '{0:.2g}'.format(memUsed / 1073741824)
+            compTotal = float(totalMem)
+            hrT = str(compTotal / 1073741824)
+            if not subDir in oldHogs_added:
+                uNew.hogs_added[subDir] = count
+                uNew.hogs_usage[subDir] = memUsed
+                run = True
+            else: 
+                martin = uOld.hogs_added[subDir]
+                will = uOld.hogs_usage[subDir]
+                if (count - martin) > 299:
+                    run = True
+                elif ((memUsed - will)/compTotal) > .10 and (count - martin) > 60:
+                    run = True
+                else: 
+                    run = False
+                    uNew.hogs_added[subDir] = martin
+                    uNew.hogs_usage[subDir] = will
 
-			# If user CPU time higher than arbitrary line, we'll consider them active.
-			# This allows us to disregard users who are still logged in, but not really doing much
-			######################################################################################
-			if uPercent > activityThreshold:
-	
-			# 	#open the cgroup (UID) cpu.stat file to see if this user is already being throttled
-			 	try:
-			 		with open(chkPath + "/cpu.stat", "r") as curFile:
-			 			getThrottleData = curFile.read().splitlines()
-			 	except IOError:
-			 		continue
-			 	#split down to just "throttled time"
-			 	getThrottleData = getThrottleData[2].split(' ')
-			 	tTime = float(getThrottleData[1])
-			 	activeU = len(uOld.throttle)
+            userTime = 0
+            userDelta = 0
+            uPercent = 0
+            for process in uPIDS:
+                procFolder = '/proc/' + process
+                
 
-			 	if subDir in uOld.throttle:
-			 		shouldThrottle = tTime - uOld.throttle[subDir]
+                # Get process CPU usage, add to user's tallclass memHogs:
+                ###########################################
+                if os.path.exists(procFolder):
+                    
+                    # This bit opens both proc/pid/stat and /status
+                    # BOTH are necessary. It was discovered that even if a pid
+                    # is actually a thread of another process (and has no /proc/pid)
+                    # that folder can still be seen and read from, causing
+                    # hyper-inflated usage values for users running threaded apps.
+                    try:		
+                        with open(procFolder + '/status') as f:
+                            status = f.read().splitlines()
+                    except IOError:
+                        logger.warning('Unable to get status of PID %s for user %s', process, subDir)
+                        continue
 
-			 		try:
-			 			with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
-			 				curFile.write(str(int(floatQuota / activeU)))
+                    getTGroup = status[2].split(':')
+                    tGroup = getTGroup[1].strip()
+                    if tGroup == process:
+                        try:
+                            with open(procFolder + '/stat') as sf:
+                                procStat = sf.read().split(' ')	
+                            #convert relevant fields for CPU time to float
+                            numlist = []
+                            for i in procStat[13:17]:
+                                numlist.append(float(i))
+                            userTime += sum(numlist)
+                        except IOError:
+                            logger.warning('Unable to get status of PID %s for user %s', process, subDir)
 
-			 		except IOError:
-			 					logger.warning("Unable to write CPU quota to cgroup: %s", subDir)	
-						
-						
-				
-				uNew.throttle[subDir] = tTime
+                            
+            if run == True:
+                
+                if memUsed >= (compTotal * .85):
+                    logger.warning("%s memory usage critical! %s GB used!", subDir, hr)
+                    uNew.hogs_usage[subDir] = memUsed
+                    uNew.hogs_added[subDir] = count
+                    writeBuf = "CRITICAL: Memory usage greater than 85% of limit. " +hr+ \
+                                     " of "+hrT+"GB used. Processes will be killed soon."
+                    try:
+                        subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
+                    except:
+                        logger.warning("Unable to notify user of memory issue. Possibly a CLI login.")
+                        cliMsg(userName, writeBuf)
+                elif memUsed >= (compTotal * .75):
+                    logger.info("%s past 75 percent of memlimit. %s GB used", subDir, hr)
+                    uNew.hogs_usage[subDir] = memUsed
+                    uNew.hogs_added[subDir] = count
+                    
+                    writeBuf = "WARNING: Memory usage greater than 75% of limit. " +hr+ \
+                                     " of "+hrT+"GB used. If limit is reached, processes will die."
+                    try:
+                        subprocess.Popen(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
+                    except:
+                        logger.warning("Unable to notify user of memory issue. Possibly a CLI login.")
+                        cliMsg(userName, writeBuf)
 
-	return uNew
-								
+
+            # Check to see if user is actually doing something.	by getting their CPU time
+            # as a fraction of total CPU time. 1.0 ~ 100% TOTAL cpu usage(not per-core like in top).
+            ####################################################################################### 
+            if subDir in uOld.uTime:
+                userDelta = userTime - uOld.uTime[subDir]
+                uPercent = userDelta / totalCPUTime[3]
+            
+            uNew.uTime[subDir] = userTime
+
+            # If user CPU time higher than arbitrary line, we'll consider them active.
+            # This allows us to disregard users who are still logged in, but not really doing much
+            ######################################################################################
+            if uPercent > activityThreshold:
+    
+            # 	#open the cgroup (UID) cpu.stat file to see if this user is already being throttled
+                 try:
+                     with open(chkPath + "/cpu.stat", "r") as curFile:
+                         getThrottleData = curFile.read().splitlines()
+                 except IOError:
+                     continue
+                 #split down to just "throttled time"
+                 getThrottleData = getThrottleData[2].split(' ')
+                 tTime = float(getThrottleData[1])
+                 activeU = len(uOld.throttle)
+
+                 if subDir in uOld.throttle:
+                     shouldThrottle = tTime - uOld.throttle[subDir]
+
+                     try:
+                         with open(chkPath + "/cpu.cfs_quota_us", "w") as curFile:
+                             curFile.write(str(int(floatQuota / activeU)))
+
+                     except IOError:
+                                 logger.warning("Unable to write CPU quota to cgroup: %s", subDir)	
+                        
+                        
+                
+                 uNew.throttle[subDir] = tTime
+
+    return uNew
+                                
 # MAIN FUNCTION
 #############################################################################
 def main(argv):
 
-	# Set some defaults, parse the config file, and grab other values as needed
-	##########################################################################
-	logging.basicConfig(level=logging.INFO)
-	global logger
-	from logging import handlers as hdl
+    # Set some defaults, parse the config file, and grab other values as needed
+    ##########################################################################
+    logging.basicConfig(level=logging.INFO)
+    global logger
+    from logging import handlers as hdl
 
-	logger = logging.getLogger("cgPyLogger")
-	logger.propagate = False
-	fh = hdl.WatchedFileHandler('/var/log/cgroup_py.log', 'a')
-	fmt = logging.Formatter('%(asctime)s %(message)s',datefmt='%m/%d/%Y %H:%M:%S')
-	fh.setFormatter(fmt)
-	logger.addHandler(fh)
-	global interval, verbose, infoMode, minUID, coreThreshold, totalMem, softMem, cGroupRoot, userQuota
-	global unassignedTasks, activityThreshold, maxNodes, maxNodes, cpusMax,totalCPUTime, memHogs, mailers
-	mailers = list()
-	ourPID = str(os.getpid())
-	signal.signal(signal.SIGINT, ctrlCHandler) #Listen for CTRL+C interrupt
-	verbose = False
-	infoMode = False
-	cfg = ConfigParser.RawConfigParser()	
+    logger = logging.getLogger("cgPyLogger")
+    logger.propagate = False
+    fh = hdl.WatchedFileHandler('/var/log/cgroup_py.log', 'a')
+    fmt = logging.Formatter('%(asctime)s %(message)s',datefmt='%m/%d/%Y %H:%M:%S')
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    global interval, verbose, infoMode, minUID, coreThreshold, totalMem, softMem, cGroupRoot, userQuota, reservedCores
+    global unassignedTasks, activityThreshold, maxNodes, maxNodes, cpusMax,totalCPUTime, memHogs, mailers
+    mailers = list()
+    ourPID = str(os.getpid())
+    signal.signal(signal.SIGINT, ctrlCHandler) #Listen for CTRL+C interrupt
+    verbose = False
+    infoMode = False
+    cfg = ConfigParser.RawConfigParser()
 
-   	try:
-		cfg.read('/etc/cgroup_py.cfg')
-	except IOError:
-		logger.warning("Unable to parse configuration file!")
-		sys.exit(2)
+    #get total available ram
+    maxMem = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+    maxGigs = maxMem / (1024 ** 3)
+    
+    # Default config values. If option not specified in cfgfile,
+    # the script will use these.
+    
+    minUID = 500
+    coreThreshold = .90
+    totalMem =  maxGigs * .25
+    cgroupRoot = findCGRoot()
+    unassignedTasks = '%s/tasks' % cgroupRoot
+    activityThreshold = .15
+    interval = 10
+    reservedCores = 0
+    refresh = 300	
 
-	try:
-		minUID = cfg.getint('main', 'minUID')
-		coreThreshold = (cfg.getfloat('main', 'coreThreshold')) / 100
-		totalMem = cfg.getfloat('main', 'memoryLimit')
-		cGroupRoot = cfg.get('main', 'cGroupRoot')
-		unassignedTasks = cGroupRoot + "tasks"
-		activityThreshold = (cfg.getfloat('main', 'activityThreshold')) / 100
-		interval = cfg.getfloat('main', 'interval')
-	except ValueError:
-		logger.warning("Unexpected value in configuration file. Please ensure values are of correct type.")
-		sys.exit(2)
-	
+    try:
+        cfg.read('/etc/cgroup_py.cfg')
+    except IOError:
+        logger.warning("Unable to parse configuration file!")
+        sys.exit(2)
+
+    try:
+        minUID = cfg.getint('main', 'minUID')
+        coreThreshold = (cfg.getfloat('main', 'coreThreshold')) / 100
+        totalMem = cfg.getfloat('main', 'memoryLimit')
+        cGroupRoot = cfg.get('main', 'cGroupRoot')
+        unassignedTasks = cGroupRoot + "tasks"
+        activityThreshold = (cfg.getfloat('main', 'activityThreshold')) / 100
+        interval = cfg.getfloat('main', 'interval')
+        reservedCores = cfg.getint('main', 'reservedCores')
+        refresh = cfg.getint('main', 'refreshPeriod')
+    except ValueError:
+        logger.warning("Unexpected value in configuration file. Please ensure values are of correct type.")
+        sys.exit(2)
+    except ConfigParser.NoOptionError as e:
+        logger.warning("Missing options. Using defaults: %s", e)
+        pass
 
 
-	# is CGroup root valid / cgroup service running?
-	################################################
-	if os.path.exists(unassignedTasks) != True:
-		logger.warning("Unable to parse task list for root CGroup with path: %s . Is CGroup service running?",
-						cGroupRoot)
-		sys.exit(2)
-		
-				
-	try:
-		opts, args = getopt.getopt(argv,"hvit:")
-	except getopt.GetoptError:
-		print 'cgroup_py [-v for verbose output]'
-		sys.exit(2)
-	for opt, arg in opts:
-		if opt == '-h':
-			print 'cgroup_py [options]'
-			print '-h  :: Help mode. This mode, in fact. \n'
-			print '-i  :: Information mode. This does not run the loop, but will simply output '+ \
-							'current settings, sysinfo, and exit.\n'
-			print '-v  :: Verbose output'
-			print 'Configuration data housed at /etc/cgroup_py.cfg\n'
-			sys.exit(2)
-		elif opt in ("-v"):
-			verbose = True
-		elif opt in ("-i"):
-			infoMode = True
-		# set interval if given,
-		# make sane if needed
+    # is CGroup root valid / cgroup service running?
+    ################################################
+    if os.path.exists(unassignedTasks) != True:
+        logger.warning("Unable to parse task list for root CGroup with path: %s . Is CGroup service running?",
+                        cGroupRoot)
+        sys.exit(2)
+        
+                
+    try:
+        opts, args = getopt.getopt(argv,"hvit:")
+    except getopt.GetoptError:
+        print 'cgroup_py [-v for verbose output]'
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-h':
+            print 'cgroup_py [options]'
+            print '-h  :: Help mode. This mode, in fact. \n'
+            print '-i  :: Information mode. This does not run the loop, but will simply output '+ \
+                            'current settings, sysinfo, and exit.\n'
+            print '-v  :: Verbose output'
+            print 'Configuration data housed at /etc/cgroup_py.cfg\n'
+            sys.exit(2)
+        elif opt in ("-v"):
+            verbose = True
+        elif opt in ("-i"):
+            infoMode = True
+        # set interval if given,
+        # make sane if needed
 
-	# Setup for memory limit, enabling charge_on_migration:
-	#with open(cGroupRoot + "memory.move_charge_at_immigrate", "w") as curFile:
+    # Setup for memory limit, enabling charge_on_migration:
+    #with open(cGroupRoot + "memory.move_charge_at_immigrate", "w") as curFile:
 #		curFile.write(str(1))
 
-	# check values for sanity
-	if (coreThreshold < .1 or coreThreshold > .98):
-		logger.error("CPU Threshold invalid. Must be between 1-98!")
-		print "CPU Threshold invalid. Must be between 1-98!"
-		sys.exit(2)
-	
-	if totalMem > 0:
-		# convert mem to bytes (*1024^3) and stringify memory limit.
-		softMem = totalMem * .6
-		totalMem = int(totalMem*1073741824)
-		softMem = int(softMem*1073741824)
-		totalMem = str(totalMem)
-		softMem = str(softMem)
-	else:
-		logger.error("Memory limit value must be greater than 0. Exiting.")
-		print "Memory limit value must be greater than 0. Exiting."
-		sys.exit(2)
-	
-	if interval <= 0:
-		logger.error("Interval must be greater than zero. Exiting.")
-		"Interval must be greater than zero. Exiting."
-		sys.exit(2)
-	
+    # check values for sanity
+    if (coreThreshold < .1 or coreThreshold > .98):
+        logger.error("CPU Threshold invalid. Must be between 1-98!")
+        print "CPU Threshold invalid. Must be between 1-98!"
+        sys.exit(2)
+    
+    if totalMem > 0:
+        # convert mem to bytes (*1024^3) and stringify memory limit.
+        softMem = totalMem * .6
+        totalMem = int(totalMem*1073741824)
+        softMem = int(softMem*1073741824)
+        totalMem = str(totalMem)
+        softMem = str(softMem)
+    else:
+        logger.error("Memory limit value must be greater than 0. Exiting.")
+        print >> sys.stderr, "Memory limit value must be greater than 0. Exiting."
+        sys.exit(2)
+    
+    if interval <= 0:
+        logger.error("Interval must be greater than zero. Exiting.")
+        print >> sys.stderr, "Interval must be greater than zero. Exiting."
+        sys.exit(2)
+    
 
-	# Magic Block - DO NOT REMOVE. Things will break, I don't know why.
-	# Ok, I *think* I know why, at least - 
-		# We ran into an intermittent crashiness issue once into
-		# semi-production with these scripts. After much trial and
-		# error and ferocious googling, I was able to pin it with some 
-		# confidence on the built-in notify_on_release bit of [cgroup].
+    # Magic Block - DO NOT REMOVE. Things will break, I don't know why.
+    # Ok, I *think* I know why, at least - 
+        # We ran into an intermittent crashiness issue once into
+        # semi-production with these scripts. After much trial and
+        # error and ferocious googling, I was able to pin it with some 
+        # confidence on the built-in notify_on_release bit of [cgroup].
 
-		# I'd need to check the kernel source to see exactly how it works,
-		# but my thinking is that this is using an eventfd on
-		# the cgroup's task list, watching to see if it 
-		# empties out completely. Once this occurs, it calls whatever is
-		# listed in "release_agent" to do things. In theory this allows us 
-		# to automatically clean up empty cgroups and keep the root
-		# hierarchy looking nice and tidy, but appears to have some bugs
-		# in older kernels.
+        # I'd need to check the kernel source to see exactly how it works,
+        # but my thinking is that this is using an eventfd on
+        # the cgroup's task list, watching to see if it 
+        # empties out completely. Once this occurs, it calls whatever is
+        # listed in "release_agent" to do things. In theory this allows us 
+        # to automatically clean up empty cgroups and keep the root
+        # hierarchy looking nice and tidy, but appears to have some bugs
+        # in older kernels.
 
-		# Furthermore, it would appear that this was hitting some kind
-		# of race condition in certain situations, causing
-		# system-wide issues as I/O backed up.
+        # Furthermore, it would appear that this was hitting some kind
+        # of race condition in certain situations, causing
+        # system-wide issues as I/O backed up.
 
-	with open(cGroupRoot + "notify_on_release", "w") as curFile:
-		curFile.write('0')
-	
-	# END Magic Block
-	##################
+    with open(cGroupRoot + "notify_on_release", "w") as curFile:
+        curFile.write('0')
+    
+    # END Magic Block
+    ##################
 
-	# Do we exist?
-	if os.path.exists(pidFile) != True:
-		logger.info("We're all alone here. Creating PID file..." )
-		with open(pidFile, "w") as pFile:
-			pFile.write(ourPID)
-	elif os.path.exists(pidFile):
-		with open(pidFile, "r") as pFile:
-			oldID = pFile.read()
-			if os.path.exists("proc/" + oldID):
-				with open("proc/" + oldID +"/stat") as curFile:
-					cmd = curFile.read().split(' ')
-					cmd = cmd[1]
-				if "cgroup_" in cmd:
-					os.kill(oldID)
-		with open(pidFile, "w") as pFile:
-			pFile.write(ourPID)
+    # Do we exist?
+    if os.path.exists(pidFile) != True:
+        logger.info("We're all alone here. Creating PID file..." )
+        with open(pidFile, "w") as pFile:
+            pFile.write(ourPID)
+    elif os.path.exists(pidFile):
+        with open(pidFile, "r") as pFile:
+            oldID = pFile.read()
+            if os.path.exists("proc/" + oldID):
+                with open("proc/" + oldID +"/stat") as curFile:
+                    cmd = curFile.read().split(' ')
+                    cmd = cmd[1]
+                if "cgroup_" in cmd:
+                    os.kill(oldID)
+        with open(pidFile, "w") as pFile:
+            pFile.write(ourPID)
 
-	# Get number of cores automagically
-	c = multiprocessing.cpu_count()
-	
-	# get memory nodes as well
-	fMem = getMemNodes()
+    # Get number of cores automagically
+    c = multiprocessing.cpu_count()
+    
+    # get memory nodes as well
+    fMem = getMemNodes()
 
-	# Get maximum value(microseconds) for cpu quota action.
-	maxCPUQuota = int((c-2)  * 100000)
+    # Get maximum value(microseconds) for cpu quota action.
+    maxCPUQuota = int((c-reservedCores)  * 100000)
 
-	# set a per-user quota in microseconds as a fraction of total
-	userQuota = str(int(coreThreshold * maxCPUQuota))
+    # set a per-user quota in microseconds as a fraction of total
+    userQuota = str(int(coreThreshold * maxCPUQuota))
 
-	maxNodes = str(int(fMem) - 1)
-	cpusMax = str(c-1)
+    maxNodes = str(int(fMem) - 1)
+    cpusMax = str(c-1)
 
-	if infoMode == True:
-		print "Cgroup resource allocation per user. Version: " + version
-		print "Running on system with CPUs: " + str(c)
-		print "And with " + fMem + " NUMA memory nodes."
-		print "User CPU quota: " + userQuota
-		print "User memory limit: " + totalMem + " bytes"
-		print "Current CPU core threshold: " + str(float(userQuota)/100000) + " Cores."
-		print "System CGroup root hierarchy: " + cGroupRoot
-		sys.exit(2)
-	else:
-		logger.info("===========================================")
-		logger.info("# Starting up...")
-		logger.info("# Running on system with CPUs: %s", str(c))
-		logger.info("# And with %s NUMA memory nodes.", fMem)
-		logger.info("# User CPU quota: %s", userQuota)
-		logger.info("# User memory limit: %s bytes", totalMem)
-		logger.info("# Current CPU core threshold: %s Cores.", str(float(userQuota)/100000))
-		logger.info("# System CGroup root hierarchy: %s", cGroupRoot)
-		logger.info("===========================================")
-		logger.info("Beginning normal operations...")
+    if infoMode == True:
+        print "Cgroup resource allocation per user. Version: " + version
+        print "Running on system with CPUs: " + str(c)
+        print "And with " + fMem + " NUMA memory nodes."
+        print "User CPU quota: " + userQuota
+        print "User memory limit: " + totalMem + " bytes"
+        print "Current CPU core threshold: " + str(float(userQuota)/100000) + " Cores."
+        print "System CGroup root hierarchy: " + cGroupRoot
+        sys.exit(2)
+    else:
+        logger.info("===========================================")
+        logger.info("# Starting up...")
+        logger.info("# Running on system with CPUs: %s", str(c))
+        logger.info("# And with %s NUMA memory nodes.", fMem)
+        logger.info("# User CPU quota: %s", userQuota)
+        logger.info("# User memory limit: %s bytes", totalMem)
+        logger.info("# Current CPU core threshold: %s Cores.", str(float(userQuota)/100000))
+        logger.info("# System CGroup root hierarchy: %s", cGroupRoot)
+        logger.info("===========================================")
+        logger.info("Beginning normal operations...")
 
-	# Init CPU usage totals at first-run, wait one interval, start loop.
-	totalCPUTime = [0, 0, 0, 0]
-	totalCPUTime = getCPUTotal(totalCPUTime)
-	time.sleep(interval)
+    # Init CPU usage totals at first-run, wait one interval, start loop.
+    totalCPUTime = [0, 0, 0, 0]
+    totalCPUTime = getCPUTotal(totalCPUTime)
+    time.sleep(interval)
 
-	usage = userData()
-	tick = 0
-	# Main loop!
-	# loop forever until killed, sleeping for provided interval.
-	#############################################################
-	while True:
-		if tick > 600:
-			tick = 0
-		totalCPUTime = getCPUTotal(totalCPUTime)
-		usage = move(usage, tick)
-		tick += interval
-		time.sleep(interval)
-		
-	signal.pause()
+    usage = userData()
+    tick = 0
+    # Main loop!
+    # loop forever until killed, sleeping for provided interval.
+    #############################################################
+    while True:
+        if tick > refresh:
+            tick = 0
+        totalCPUTime = getCPUTotal(totalCPUTime)
+        usage = move(usage, tick)
+        tick += interval
+        time.sleep(interval)
+        
+    signal.pause()
 if __name__ == "__main__":
-	main(sys.argv[1:])
+    main(sys.argv[1:])
