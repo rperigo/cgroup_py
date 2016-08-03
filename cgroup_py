@@ -30,6 +30,51 @@ class userData:
         self.hogs_usage = dict()
         self.hogs_added = dict()
 
+        # used for monitoring mode
+        self.activeUsers = list()
+        self.userTasks = dict() # dict follopwing "cgroup": numTasks
+        self.fairCPU = str()
+
+
+    def copy(self):
+        new = userData()
+        new.throttle = self.throttle
+        new.uTime = self.uTime
+        new.igProcs = self.igProcs
+        new.hogs_added = self.hogs_added
+        new.hogs_usage = self.hogs_usage
+        new.uPercent = self.uPercent 
+        return new
+        
+    def dump(self, mode='stdout'):
+        if mode == 'stdout':
+            for each in self.uTime.keys():
+                print >>sys.stdout, "USER %s" % each
+                print >> sys.stdout, "    CPU Time:"
+                print >> sys.stdout, "    ----%s" % str(self.uTime[each])
+                print >> sys.stdout, "    CPU PCT"
+                print >> sys.stdout, "    ----%s" % str(self.uPercent[each])
+                print >> sys.stdout, "    MEMORY"
+                print >> sys.stdout, '    ----%s' % str(self.hogs_usage[each])
+
+        elif mode == 'fd':
+            outputStrings = list()
+            for each in self.uTime.keys():
+                odict = dict()
+                odict['uName'] = each
+                odict['cpuTime'] = self.uTime[each]
+                odict['cpuPCT'] = self.uPercent[each]
+                odict['memused'] = self.hogs_usage[each]
+                odict['userTasks'] = self.userTasks[each]
+                outputStrings.append(json.dumps(odict))
+
+            outputStrings.append(json.dumps({'activeUsers':self.activeUsers}))
+            outputStrings.append(json.dumps({'cpuLimit':self.fairCPU}))
+
+            with open("/tmp/cgroup_py/monitor", "w") as jsonfile:
+                for strng in outputStrings:
+                    print >> jsonfile, strng
+
 # Simple handler function to listen for an interrupt and respond appropriately.
 ####################################################################################################
 def ctrlCHandler(sig, frame): 
@@ -113,6 +158,9 @@ def cliMsg(uName, msgBuffer):
     except subprocess.CalledProcessError as e:
         return e
 
+# function to find the actual cgroup root on the system
+# uses some dirty logic to decide whether we're on a monolithic
+# hierarchy or separate mounts for the controllers.
 def findCGRoot():
     cgroot = ''
     cgMounts = list()
@@ -397,7 +445,7 @@ def move(uOld, count):
                         
                 
                  uNew.throttle[subDir] = tTime
-
+            
     return uNew
                                 
 # MAIN FUNCTION
@@ -464,7 +512,14 @@ def main(argv):
     except ConfigParser.NoOptionError as e:
         logger.warning("Missing options. Using defaults: %s", e)
         pass
-
+    try:
+        enableMonitoring = cfg.getboolean('main', 'enableMonitoring')
+    except (ValueError, ConfigParser.NoOptionError) as e:
+        eMsg = ("Malformed value for enableMonitoring. Must be boolean."
+                " Disabling monitoring.")
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        enableMonitoring = False
 
     # is CGroup root valid / cgroup service running?
     ################################################
@@ -601,6 +656,11 @@ def main(argv):
         logger.info("# System CGroup root hierarchy: %s", cGroupRoot)
         logger.info("===========================================")
         logger.info("Beginning normal operations...")
+    
+    if enableMonitoring:
+        tmpDir = "/tmp/cgroup_py"
+        if not os.path.isdir(tmpDir):
+            os.mkdir(tmpDir)
 
     # Init CPU usage totals at first-run, wait one interval, start loop.
     totalCPUTime = [0, 0, 0, 0]
@@ -617,6 +677,8 @@ def main(argv):
             tick = 0
         totalCPUTime = getCPUTotal(totalCPUTime)
         usage = move(usage, tick)
+        if enableMonitoring:
+                uData.dump(mode='fd')
         tick += interval
         time.sleep(interval)
         
