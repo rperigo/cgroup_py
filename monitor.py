@@ -20,12 +20,12 @@ lbreakChar = "-" # use string * n to multiply this across the window
 L_Groot = "System CG Root: %s"
 L_RTasks = "Unassigned Tasks: %d"
 L_ActiveU = "Users marked active: %d"
-L_UsersExist = "Logged in: %d"
+L_UsersExist = "Logged in/Total: %d/%d"
 L_UTasks = "Number of tasks: %d"
 L_UCPUTime = "User CPU Time: %f"
 L_UCPUPercent = "User CPU %%: %f"
 L_UMemory = "User Memory: %f"
-
+L_ResCores = "Reserved Cores: %d"
 # get_user_name()
 # simple function to call getent on passwd and return readable username from a UID
 
@@ -40,6 +40,13 @@ def get_user_name(cgroup):
     
     return out
 
+def get_total_cgroups(cgroot):
+    paths = os.listdir(cgroot)
+    counter = 0
+    for each in paths:
+        if "UID" in each or 'user-' in each:
+            counter +=1
+    return counter
 
 def getUnassignedTasks(cgroot):
     try:
@@ -69,7 +76,7 @@ def parseUserJSON(fpath):
             userDicts['cpuLimit'] = dict(odict)
     return userDicts
 
-def drawHeader(modChr, tick, window, columns, cpulimitf, mlGigs, rootMount, rootTasks, activeUNum, NumCgroups):
+def drawHeader(modChr, tick, window, columns, cpulimitf, mlGigs, rootMount, rootTasks, activeUNum, NumCgroups, rescores):
     if not fullPct:
         cpulim = "{0:.2f}".format(cpulimitf / cores)
         maxCPUPct = 100.00
@@ -82,7 +89,8 @@ def drawHeader(modChr, tick, window, columns, cpulimitf, mlGigs, rootMount, root
     label_cgroot = L_Groot % rootMount
     label_rTasks = L_RTasks % rootTasks
     label_activeU = L_ActiveU % activeUNum
-    label_loggedIn = L_UsersExist % NumCgroups
+    label_loggedIn = L_UsersExist % (NumCgroups, totalCgroups)
+    label_resCores = L_ResCores % rescores
     label_cpulimit = "CPU Limit: %s%%" % cpulim
     if henschelMode:
         mcMotd = " Totally Midnight Commander, I Swear!"
@@ -96,19 +104,27 @@ def drawHeader(modChr, tick, window, columns, cpulimitf, mlGigs, rootMount, root
     
     window.addstr(2,(columns - (len(label_rTasks)+1)), label_rTasks)
     window.addstr(3,1, label_activeU)
-    window.addstr(3, (columns - (len(label_loggedIn)+1)), label_loggedIn)
+    #window.addstr(3, (columns - (len(label_loggedIn)+1)), label_loggedIn)
+    window.addstr(3, (columns - (len(label_resCores)+1)), label_resCores)
+    cColwide = columns-len(label_activeU) - len(label_resCores) - 1
+    # if cColwide > len(label_loggedIn)+2:
+    #     cColSP = (cColwide - len(label_loggedIn)) / 2
+    #     mlPos = len(label_activeU) + cColSP
+    #     window.addstr(3, mlPos, label_loggedIn)
     window.addstr(4, 1, "CPU Cores / Max Pct: %d cores, %s%%" % (cores, maxCPUPct))
     cColwide =columns-len("CPU Cores / Max Pct: %d cores, %s%%" % (cores, maxCPUPct)) - len(label_cpulimit) - 1
     if cColwide > len("Memory Limit: %sGB" % "{0:.2f}".format(mlGigs)) + 2:
         cColSP = (cColwide - len("Memory Limit: %sGB" % "{0:.2f}".format(mlGigs))) / 2
         mlPos =len("CPU Cores / Max Pct: %d cores, %s%%" % (cores, maxCPUPct)) + cColSP
         window.addstr(4, mlPos, "Memory Limit: %sGB" % "{0:.2f}".format(mlGigs))
+        window.addstr(3, mlPos, label_loggedIn)
     window.addstr(4,(columns - (len(label_cpulimit) +1)), label_cpulimit)
     window.addstr(5,1, lbreakChar*(columns - 2))
     if henschelMode:
         for l in range(2, 5):
             window.move(l, 0)
             window.chgat(curses.color_pair(6))
+            #window.chgat(curses.A_BOLD)
 # drawDataBox()
 # Function in charge of drawing the box containing each cgroup's individual usage data.
 ########################################################################################
@@ -185,7 +201,9 @@ def drawDataBox(mode, window, columns, height, userDict, CG, revCG, usert, rever
                 eachS = userCG[each]
             lMarker = " "
             cpuPCT = userDict[userCG[each]]['cpuPCT']
-            if (cpuPCT * cores *100) >= float(userDict['cpuLimit']['cpuLimit']):
+            if cpuPCT < 0:
+                cpuPCT = 0.00
+            if (cpuPCT * cores *100) >= .95 * float(userDict['cpuLimit']['cpuLimit']):
                 lMarker = " L"
                 colorMode = curses.A_REVERSE
             else:
@@ -311,7 +329,7 @@ def main(scr):
     global initStyle, cGroot, tmpPath, cores, systemMemory, memLimit
     global rev, retChr, showActiveOnly, curson, fullPct, pages, page
     global inputQueryDef, inputQueries, helpMsg
-    global lastSort, oldLen, henschelMode
+    global lastSort, oldLen, henschelMode, totalCgroups
 
 
     henschelMode = False
@@ -342,7 +360,7 @@ def main(scr):
        
             
     cGroot = findCGRoot()
-
+    totalCgroups = get_total_cgroups(cGroot)
     # Bunch of constants and globals
     ####################################################################################
 
@@ -351,7 +369,7 @@ def main(scr):
     tmpPath = "/tmp/cgroup_py/monitor"
    #tmpPath = 'monitor.txt'
     #cGroot = "/sys/fs/cgroup/cpu"
-    srtMode = 'n'
+    srtMode = 'c'
     cores = multiprocessing.cpu_count()
     systemMemory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') #in bytes
     try:
@@ -361,6 +379,11 @@ def main(scr):
         print >> sys.stderr, "No option found in CFG for memory limit. Using default of TOTALMEM/4"
         memLimit = systemMemory *.25
         memLimitGigs = memLimit / 1024**3
+    try:
+        rcores = cfgFile.getint('main', 'reservedCores')
+    except:
+        print >> sys.stderr, 'No option found for reserved cores. Assuming 0'
+        rcores = 0
 
     rev = False
     retChr = '.'
@@ -371,9 +394,9 @@ def main(scr):
     page = 0
     inputQueryDef = "q to quit, r to refresh. ? for help"
     inputQueries = {"def": [inputQueryDef], "A":["Showing all cgroups", "Showing active cgroups only"], 
-                    "M":["Using 100% x Cores as CPU percent", "Using 100% for total CPU"], "c":"Sorting by CPU time",
+                    "P":["Using 100% x Cores as CPU percent", "Using 100% for total CPU"], "c":"Sorting by CPU time",
                     "m":"Sorting by memory usage", "t": "Sorting by number of tasks", "n":"Sorting by username",
-                    "u":"Sorting by cgroup/UID"}
+                    "u":"Sorting by cgroup/UID", "v":"Reversing sort order."}
     helpMsg = list()
     helpMsg =   ["Sort and View",
                 "The Below keys will adjust display and sorting parameters. The sorted column will be highlighted with a carat pointing in the sort direction.",
@@ -382,7 +405,7 @@ def main(scr):
                 "v:: Reverse sort order",
                 "c:: Sort by CPU percentage.",
                 "m:: Sort by memory usage.",
-                "M:: Mike Mode. Do not use unless you are a space-doctor.",
+                "P:: Toggle percentages between Max = 100% | Max = numCores X 100%",
                 "t:: Sort by number of tasks.",
                 "n:: Sort by user name.",
                 "u:: Sort by cgroup/UID",
@@ -407,7 +430,8 @@ def main(scr):
     curses.init_pair(3, -1, -1)
     curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLUE)
     curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
-    curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_BLUE)
+    #curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_BLUE)
+    curses.init_pair(6, curses.COLOR_CYAN, curses.COLOR_BLUE)
     scr.nodelay(True)
     scr.keypad(1)
     exitChr = False
@@ -421,13 +445,14 @@ def main(scr):
             para = wide-5
             scr.erase()
             scr.nodelay(False)
-            scr.addstr(1,1, "Help Screen!")
-            linepos = 1
-            for character in "Wow! Very text! Such helpful!":
-                colors = [curses.A_REVERSE, curses.A_NORMAL]
-                rando = random.randint(0,1)
-                scr.addstr(2, linepos, character, colors[rando])
-                linepos +=1
+            scr.addstr(1,1, "CGroup_Py Monitor")
+            scr.addstr(2,1, "Help and Information Screen")
+            # linepos = 1
+            # for character in "Wow! Very text! Such helpful!":
+            #     colors = [curses.A_REVERSE, curses.A_NORMAL]
+            #     rando = random.randint(0,1)
+            #     scr.addstr(2, linepos, character, colors[rando])
+            #     linepos +=1
             
             scr.addstr(3,1, "-"*(wide-2))
             pos = 5
@@ -507,7 +532,7 @@ def main(scr):
         # for input handling / checking for sort and viewstate toggles.
 
         for i in range(0, int(15/div)):
-            
+            curses.flushinp()
             pages = list()                            # For this section, set the user input prompt
             if retChr in 'A':                         # to reflect latest input (e.g. new sort mode)
                 if showActiveOnly:
@@ -520,7 +545,7 @@ def main(scr):
                 else:                                   # e.g. 100% as maximum versus 800% on an 8 core box.
                     inputQuery = inputQueries['M'][1]
             
-            elif any(retChr in k for k in ('c', 'n', 't', 'm', 'u')):  # Prompts for new sortmode - by cpu, mem, etc.
+            elif any(retChr in k for k in ('c', 'n', 't', 'm', 'u', 'v')):  # Prompts for new sortmode - by cpu, mem, etc.
                 inputQuery = inputQueries[retChr]                      # Text stored in a dict keyed to appropriate
             else:                                                      # input char
                 inputQuery = inputQueryDef
@@ -572,7 +597,7 @@ def main(scr):
             # to do something to stop it from dying, either displaying less data, a blank 
             # term, or a "Too tiny" message. This seemed the least painful approach.)
 
-            if winWidth < 80 or winHeight < 16:
+            if winWidth < 60 or winHeight < 16:
                 
                 if winWidth > 18 and winHeight >=1:
                     scr.addstr(winHeight/2, 1, "Window Too Small")
@@ -597,7 +622,7 @@ def main(scr):
                 
                 # Call drawHeader() to paint the more global info (cpu limit, active users, etc)
                 drawHeader(retChr, it, scr, winWidth, cpulimitf, memLimitGigs, cGroot, mastertasks, 
-                                len(userd['activeUsers']['activeUsers']), len(userCGROUPS))
+                                len(userd['activeUsers']['activeUsers']), len(userCGROUPS), rcores)
 
                 # Call drawDataBox() to paint the list of cgroups and what they're up to
                 drawDataBox(srtMode, scr, winWidth, winHeight, userd, userCGROUPS, revList,
@@ -647,13 +672,12 @@ def main(scr):
                 if inp == ord('A'):           # Toggle for showing all cgroups or active only
                     showActiveOnly = not showActiveOnly
 
-                if inp == ord('M'):           # Spacedoctor mode. Toggles how to show percentages
+                if inp == ord('P'):           # Spacedoctor mode. Toggles how to show percentages
                     fullPct = not fullPct     # Placates a certain astronomer.
 
                 if inp == ord('H'):                  # HenschelMode. WIP to make things pretty and
                     henschelMode = not henschelMode  # more like Midnight Commander.
-                    #scr.attron(curses.color_pair(1))
-                    #scr.bkgdset(0, curses.color_pair(1))
+                    
                 inputQuery = inputQueryDef  
                 curson = not curson
                 time.sleep(div)
