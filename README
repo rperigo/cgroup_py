@@ -33,8 +33,7 @@
 		memory
 
 	By default, the cgroup system will want to create individual groups
-	or hierarchies for each subsystem (e.g. 					with open(chkPath + "/memory.oom_control", "w" as curFile:
-						curFile.write("1")cpu, memory, blkio), which
+	or hierarchies for each subsystem (e.g. cpu, memory, etc) which
 	will not function with this script.
 	
 	Since the cgroup system is rather rigid about how these things can
