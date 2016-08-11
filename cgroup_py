@@ -294,28 +294,81 @@ def move(uOld, count):
             getUname = subprocess.Popen(['getent', 'passwd', userID], stdout=subprocess.PIPE)
             userName = getUname.communicate()[0].split(':')[0]
 
+            # Try to verify needed settings (it will NOT let us write to anything else if we're missing cpuset.mems/cpus')
+            # If we can't read the files, skip. If they just have the wrong values, correct them.
+            try:
+                with open(chkPath + "/cpuset.mems", "r") as curFile:
+                    memnon = curFile.read()
+                with open(chkPath + "/cpuset.cpus", "r") as curFile:
+                    cpus = curFile.read()
+                with open(chkPath + "/cpu.shares", "r") as curFile:
+                    shares = curFile.read()
+                if memnon in "0-"+maxNodes and cpus in "%s-%s" % (reservedCores, cpusMax) and shares in "1024":
+                    pass
+                else:
+
+                    try:
+                        # Ensure that static values are good each run
+                        with open(chkPath + "/cpuset.mems", "w") as curFile:
+                            curFile.write("0-"+maxNodes)
+                        with open(chkPath + "/cpuset.cpus", "w") as curFile:
+                            curFile.write("%s-%s" % (reservedCores, cpusMax))
+                        with open(chkPath + "/cpu.shares", "w") as curFile:
+                            curFile.write("1024")
+                    except (IOError, OSError) as e:
+                        logger.error("Unable to verify base parameters for %s. Skipping", subDir)
+                        continue
+            except (IOError, OSError) as e:
+                logger.error("Unable to verify base parameters for %s. Skipping", subDir)
+                continue
+
+
+            # Check our limits for memory are in place, try to correct if needed. Also check cpu 
+            # scheduler period (used to math out CPU limits)
 
             try:
-                # Ensure that static values are good each run
-                with open(chkPath + "/cpuset.mems", "w") as curFile:
-                    curFile.write("0-"+maxNodes)
-                with open(chkPath + "/cpuset.cpus", "w") as curFile:
-                    curFile.write("2-"+cpusMax)
-                with open(chkPath + "/cpu.shares", "w") as curFile:
-                    curFile.write("1024")
-                with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
-                    curFile.write("100000")
-                with open(chkPath + "/memory.soft_limit_in_bytes", "w") as curFile:
-                    curFile.write(softMem)		
-                with open(chkPath + "/memory.limit_in_bytes", "w") as curFile:
-                    curFile.write(totalMem)
+                with open(chkPath + "/cpu.cfs_period_us", "r") as curFile:
+                    prd = curFile.read()
+                with open(chkPath + "/memory.soft_limit_in_bytes", "r") as curFile:
+                    sysSoftMem = curFile.read()		
+                with open(chkPath + "/memory.limit_in_bytes", "r") as curFile:
+                    sysHardMem = curFile.read()
                 #disable swap. This will force processes to OOM-kill when the user's memlimit is reached.
-                with open(chkPath + "/memory.memsw.limit_in_bytes", "w") as curFile:
-                    curFile.write(totalMem)
+                with open(chkPath + "/memory.memsw.limit_in_bytes", "r") as curFile:
+                    sysHardMemSW = curFile.read()
+                if prd != "100000":
+                    try:
+                        with open(chkPath + "/cpu.cfs_period_us", "w") as curFile:
+                            curFile.write("100000")
+                    except (IOError, OSError):
+                        logger.error("Unable to set cpu scheduluer period for %s", subDir)
+                        continue
+                if sysSoftMem != softMem:
+                    try:
+                        with open(chkPath + "/memory.soft_limit_in_bytes", "w") as curFile:
+                            curFile.write(softMem)
+                    except (IOError, OSError):
+                        logger.error("Unable to write softmem limit for %s", subDir)
+                        continue
+                if sysHardMem != totalMem or sysHardMemSW != totalMem:
+                    try:
+                        with open(chkPath + "/memory.limit_in_bytes", "w") as curFile:
+                            curFile.write(totalMem)
+                        with open(chkPath + "/memory.memsw.limit_in_bytes", "w") as curFile:
+                            curFile.write(totalMem)
                 
-            except IOError as e:
-                logger.warning("Unable to write parameters to cgroup: %s", subDir)	
+                    except (IOError, OSError):
+                        logger.error("Unable to write hardmem limit for %s", subDir)
+                        continue
+                    
+            except (IOError, OSError) as e:
+                logger.warning("Unable to read base limits for cgroup: %s", subDir)	
                 logger.warning("Associated error: %s", e)
+                continue
+            
+                		
+                
+          
             try:
                 with open(chkPath+"/memory.memsw.usage_in_bytes") as curF:
                     memUsed = float(curF.read())
@@ -331,26 +384,32 @@ def move(uOld, count):
                     uPIDS = tf.read().splitlines()
                     uNew.userTasks[subDir] = len(uPIDS)
             except IOError:
+                logger.error("Can't get task list for %s", subDir)
                 continue
             
-            hr = '{0:.2g}'.format(memUsed / 1073741824)
+            hr = '{0:.2f}'.format(memUsed / 1073741824)
             compTotal = float(totalMem)
             hrT = str(compTotal / 1073741824)
-        
-            if not subDir in oldHogs_added:
-                uNew.hogs_added[subDir] = count
+            now = time.clock()
+
+            #if not subDir in oldHogs_added:
+            if count == 0:
+                uNew.hogs_added[subDir] = now
                 #uNew.hogs_usage[subDir] = memUsed
                 run = True
             else: 
-                martin = uOld.hogs_added[subDir]
-                will = uOld.hogs_usage[subDir]
-                if (count - martin) > 299:
+                # martin = uOld.hogs_added[subDir]
+                # will = uOld.hogs_usage[subDir]
+                # if (count - martin) > (refresh/2):
+                #     run = True
+                # elif ((memUsed - will)/compTotal) > .25 and (count - martin) > 600:
+                #     run = True
+                if now - uOld.hogs_added[subDir] >= refresh:
                     run = True
-                elif ((memUsed - will)/compTotal) > .10 and (count - martin) > 60:
-                    run = True
+                    uNew.hogs_added = now
                 else: 
                     run = False
-                    uNew.hogs_added[subDir] = martin
+                    uNew.hogs_added[subDir] = uOld.hogs_added[subDir]
                     #uNew.hogs_usage[subDir] = memUsed
 
             userTime = 0
@@ -395,8 +454,9 @@ def move(uOld, count):
                 
                 if memUsed >= (compTotal * .85):
                     logger.warning("%s memory usage critical! %s GB used!", subDir, hr)
-                    uNew.hogs_usage[subDir] = memUsed
-                    uNew.hogs_added[subDir] = count
+                    uNew.hogs_added[subDir] = now
+                   # uNew.hogs_usage[subDir] = memUsed
+                    # uNew.hogs_added[subDir] = count
                     writeBuf = "CRITICAL: Memory usage greater than 85% of limit. " +hr+ \
                                      " of "+hrT+"GB used. Processes will be killed soon."
                     try:
@@ -406,8 +466,9 @@ def move(uOld, count):
                         cliMsg(userName, writeBuf)
                 elif memUsed >= (compTotal * .75):
                     logger.info("%s past 75 percent of memlimit. %s GB used", subDir, hr)
-                    uNew.hogs_usage[subDir] = memUsed
-                    uNew.hogs_added[subDir] = count
+                   # uNew.hogs_usage[subDir] = memUsed
+                    # uNew.hogs_added[subDir] = count
+                    uNew.hogs_added[subDir] = now
                     
                     writeBuf = "WARNING: Memory usage greater than 75% of limit. " +hr+ \
                                      " of "+hrT+"GB used. If limit is reached, processes will die."
@@ -481,7 +542,7 @@ def main(argv):
     fmt = logging.Formatter('%(asctime)s %(message)s',datefmt='%m/%d/%Y %H:%M:%S')
     fh.setFormatter(fmt)
     logger.addHandler(fh)
-    global interval, verbose, infoMode, minUID, coreThreshold, totalMem, softMem, cGroupRoot, userQuota, reservedCores
+    global interval, verbose, infoMode, minUID, coreThreshold, totalMem, softMem, cGroupRoot, userQuota, reservedCores, refresh
     global unassignedTasks, activityThreshold, maxNodes, maxNodes, cpusMax,totalCPUTime, memHogs, mailers, maxCPUQuota,c
     mailers = list()
     ourPID = str(os.getpid())
@@ -505,7 +566,7 @@ def main(argv):
     activityThreshold = .15
     interval = 10
     reservedCores = 0
-    refresh = 300	
+    refresh = 3600	
 
     try:
         cfg.read('/etc/cgroup_py.cfg')
@@ -671,6 +732,7 @@ def main(argv):
         logger.info("# User memory limit: %s bytes", totalMem)
         logger.info("# Current CPU core threshold: %s Cores.", str(float(userQuota)/100000))
         logger.info("# System CGroup root hierarchy: %s", cGroupRoot)
+        logger.info("# Memory monitor refresh period: %d", refresh)
         logger.info("===========================================")
         logger.info("Beginning normal operations...")
     
