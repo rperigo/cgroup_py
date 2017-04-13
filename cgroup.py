@@ -1,9 +1,22 @@
+## cgroup.py
+##
+## Module: cgroup
+## Our one-stop shop for code directly related to cgroups and cgroup accessories.
+#####################################################################################################
+
 import memory, cpu
 import subprocess
 import json
 from systemd import systemd_interface # CONNECT TO SYSTEMD WITH GREAT JUSTICE
 from os import listdir as ls
 from os import stat
+## Leftovers from trying to put oomailer in here.
+## TODO: Remove commented imports
+# from os import open as opn
+# from os import write
+# from os import close
+# from os import read
+# from os import O_WRONLY, O_RDONLY
 from pwd import getpwuid
 from globalData import initStyle, configData, cores, cpu_period
 from globalData import cpu_cgroup_root, cpuset_cgroup_root, cpuacct_cgroup_root
@@ -11,10 +24,18 @@ from globalData import memory_cgroup_root, blkIO_cgroup_root
 from dbus import UInt64
 from datetime import datetime
 from datetime import timedelta
+from log import logger ## Yo dog, I heard you liked to log.
+import threading
 
-
+## class cgroup
+##
+## Primarily houses a complex data structure to let us interact with a given cgroup and
+## store information about it.
+## Also contains methods for setting limits, gathering tasks, gathering total CPU usage
+## for the cgroup, and dumping cgroup info to a JSON string.
+#######################################################################################
 class cgroup:
-
+    
     UIDS = list()
     unames = dict()
     GIDS = list()
@@ -40,9 +61,12 @@ class cgroup:
     fixed_memLimit = bool()
     throttled = bool()
     def_limits = {"cpu":0, "mem": 0, "cpushares":1024}
-
+    
+    ## Init this beast.
     def __init__(self, uid, svc=[], ident="", tasklist=[]):
-        print "UID IS " + str(uid)  
+        ## UID is a list of ints. In most cases, it should be
+        ## one UID long, but theoretically we could group UIDs
+        ## into one big cgroup if needed  
         if isinstance(uid, list):
             self.UIDS = list(uid)
         elif isinstance(uid, str) or isinstance(uid, int):
@@ -51,8 +75,13 @@ class cgroup:
         if self.UIDS:
             for i in self.UIDS:
                 self.unames[i] = getpwuid(i)[0]
+        ## TODO: Fully implement this.
+        ## We can also take a list of services to cgroupify.
+        ## Systemd already allows for this, but we can A) add backward compat with non-systemd
+        ## distros, and B) add them to the automatically-divided resource pool
+        ## This block also decides the isuser boolean
         if len(svc) > 0:
-            if isinstance(svc, str): # optionally, we can take a service.
+            if isinstance(svc, str):
                 self.services = [ svc ]
             elif isinstance(svc, list):
                 self.services = list(svc)
@@ -65,6 +94,7 @@ class cgroup:
             self.isbulk = True
             self.isUser = False
         
+        # Set some stuff specific to init style (e.g. systemd vs sysvinit)
         if initStyle == "sysv":
             if self.isUser:
                 self.ident = "%s%s" % (configData.cgprefix, uid)
@@ -76,7 +106,6 @@ class cgroup:
         
         elif initStyle == "sysd":
             if self.isUser:
-                print " I ARE USER "
                 self.ident = "user-%s.slice" % self.UIDS[0]
                 self.cpu_cgroup_path = "%s/user.slice/%s" % (cpu_cgroup_root, self.ident)
                 self.cpuacct_cgroup_path = "%s/user.slice/%s" % (cpuacct_cgroup_root, self.ident)
@@ -100,7 +129,14 @@ class cgroup:
         self.penaltyboxed = False
         self.fixed_cpuLimit = False
         self.fixed_memLimit = False
+        ## Rock the OOM monitor thread out. 
+        self.oom_thread = memory.oom_thread(self.ident, self.mem_cgroup_path, configData.msglog_dateformat, self.UIDS[0])
+        self.oom_thread.start()
+       
 
+
+    ## func updateTasks()
+    ## get tasks attached to the cgroup
     def updateTasks(self, tasklist):
         taskslast = list()
         self.tasks = list(tasklist) # pass in array of tasks for this cgroup
@@ -112,16 +148,16 @@ class cgroup:
                     ts = f.read().splitlines()
                     taskslast = taskslast + [t for t in ts if not t in taskslast]
             except:
-                print "Couldn't open taskfile: %s/tasks" % p
-        try: # TODO: split into separate try/except
-            cpu_tf = open(self.cpu_cgroup_path, 'a')
-            cpuset_tf = open(self.cpuset_cgroup_path, 'a')
-            cpuacct_tf = open(self.cpuacct_cgroup_path, 'a')
-            mem_tf = open(self.mem_cgroup_path, 'a')
+                logger.error("Couldn't open taskfile: %s/tasks" % p)
+        try: # TODO: split into separate try/except - or just loop throuh self.paths?
+            cpu_tf = open("%s/tasks" % self.cpu_cgroup_path, 'a')
+            cpuset_tf = open("%s/tasks" % self.cpuset_cgroup_path, 'a')
+            cpuacct_tf = open("%s/tasks" % self.cpuacct_cgroup_path, 'a')
+            mem_tf = open("%s/tasks" % self.mem_cgroup_path, 'a')
         
         except (IOError, OSError) as e:
             return 2
-            # TODO: implement logging
+            logger.error("Could not open taskfile for cgroup %s" % self.ident)
 
         tfs = (cpu_tf, cpuset_tf, cpuacct_tf, mem_tf)
         written = list()
@@ -133,10 +169,7 @@ class cgroup:
                             print >>f, pid
                             written.append(f)
                         except:
-
-                            # TODO Tie into logging
-                            
-                            pass
+                            logger.debug("Unable to append task to cgroup %s" % self.ident)
         for f in tfs:
             f.close()
 
@@ -149,9 +182,10 @@ class cgroup:
                     if len(lsplit) == 2:
                         self.meminfo[lsplit[0]] = int(lsplit[1])
         except (IOError, OSError) as e:
-            print e
+            logger.error("Unable to gather memory information from cgroup %s" % self.ident)
         return 0
-
+    ## func getCPUPercent()
+    ## Get cgroup's cpu usage datas, delta against system totals since last grab.
     def getCPUPercent(self, system_totals):
         newtime = cpu.get_user_CPUTotals(self.tasks)
         cg_change = newtime - self.cpu_time
@@ -168,6 +202,9 @@ class cgroup:
             self.throttled = False
 
         self.cpu_time = newtime
+    ## func setlimits()
+    ## sets limits for this cgroup. CPU limit is MANDATORY
+    ## memory limit, CPU shares are defaulted to system defaults (but can take an optional value)
     def setlimits(self,cpuLim, memLim=configData.cgroup_memoryLimit_bytes, shares=1024):
         
         if initStyle == "sysv":
@@ -185,28 +222,39 @@ class cgroup:
                 shares = UInt64(shares)
                 cpuLim = UInt64(cpuLim)
                 memLim = UInt64(memLim)
-                systemd_interface.SetUnitProperties(self.ident, 'true', [("CPUShares", shares), ("CPUQuotaPerSecUSec", cpuLim), ("MemoryLimit", memLim)])
-                # manually disable swap for cgroup
+                
+                ## Use systemd to set limits directly on this bad boy 
+                dbg = systemd_interface.SetUnitProperties(self.ident, 'true', [("CPUShares", shares), ("CPUQuotaPerSecUSec", cpuLim), ("MemoryLimit", memLim)])
+                logger.warning("Systemd line debug: %s" % dbg)
                 if self.noswap:
                     try:
-                        with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
-                            f.write(str(memLim))
-                    except:
+                        # with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                        #     f.write(str(memLim))
+                        with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
+                            f.write(str(0))
+                    except (OSError, IOError) as e:
+                        logger.debug("Unable to set swappiness for cgroup! %s" % self.ident)
                         pass # THIS SEEMS TO FAIL A LOT WITH PERM ERRORS. SYSD LOCKING DOWN CG FILES?
+                    except:
+                        pass
 
-    ##def penaltyBox(self, cpuLim, memLim=configData.cgroup_memoryLimit_gigs, shares=configData.cpushares, timeout=configData.penaltyTimeout, mode=configData.pb_cpumode):
-    def penaltyBox(self, timeout=configData.penaltyTimeout):
+            else:
+                pass
+                ## TODO: implement non-user cgroup limit-setting   
+                    
+    ## func penaltyBox()
+    ## Function to just drop limits to preset values for a penaltybox
+    def penaltybox(self, timeout=configData.penaltyTimeout):
         self.penaltyboxed = True
-       # self.setlimits(self, cpuLim, memLim, shares)
-       # maybe just offload limit-setting to the daemon / other modules? This makes sense since I currently have no way to get the proper cpu limit here.
-       # that logic currently takes place elsewhere
         self.penaltybox_end = datetime.now() + timedelta(seconds=timeout)
-    
-    def unpenaltyBox(self):
+    ## companion function to drop the pb
+    def unpenaltybox(self):
         self.penaltyboxed = False # remove pb flag
         self.penaltybox_end = datetime.now()
         self.setlimits( cpu_period * cores) # set to default limits
-
+    
+    ## func dumpinfo()
+    ## just dumps various cgroup info to json for monitoring.
     def dumpinfo(self):
         output = dict()
         output['ident'] = self.ident
@@ -220,5 +268,5 @@ class cgroup:
         output['cpuquotausecs'] = self.cpu_quota
         output['memused'] = self.meminfo['total_rss']
         output['cached'] = self.meminfo['total_cache']
-
+        output['isuser'] = self.isUser
         return json.dumps(output)

@@ -341,3 +341,18 @@ def guessUnit_ReturnBytes(rawstr):
         bites = int(digits)
     
     return bites
+
+## Parse string representing memory size, return int in bytes
+def memory_unitizer(val):
+    oval = 0
+    ## Convert value based on unit
+    if any(u in val for u in ("k", "K")):
+        oval = int(val[:-1]) * 1024
+    elif any(u in val for u in("m", "M")):
+        oval = int(val[:-1]) * 1024 ** 2
+    elif any(u in val for u in ("g", "G")):
+        oval = int(val[:-1]) * 1024 ** 3
+    else:
+         oval = int(val)
+
+    return oval

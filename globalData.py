@@ -1,3 +1,10 @@
+## globalData.py
+##
+## Module to hold some, well, global data to be used around this program.
+## Stuff gets inited here and then imported elsewhere when needed. This
+## prevents having to pass data structures back and forth between functions
+## especially large, complex structures like the cgroup dictionary.
+
 import cgConfig
 import util
 
@@ -16,7 +23,6 @@ else:
     cpu_period = 100000
 cores = util.cores
 CGROOT = ""
-
 
 ## CONSIDER MAKING THIS A UNIX SOCKET OR 
 ## AT LEAST A DAMN PSEUDOFILE
@@ -39,6 +45,7 @@ arr_cgroups = dict()
 arr_pb_groups = dict()
 # hold currently throttled users, their cpu and mem usage (Curr/avg), and throttle start
 arr_throttles = list()
+names = dict()
 
 max_cpu_usecs = ( cores * cpu_period ) * configData.cpu_pct_max
 
