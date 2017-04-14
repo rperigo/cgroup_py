@@ -1,0 +1,5 @@
+Misc notes:
+
+Systemd doesn't appear to change things if set up in the middle of a user's new session.
+^^^^^^ SOMETIMES. It did this when I first started it on my cent7 vm, but not for ANY additional users.
+^^^^^^ Creating a fresh new user and logging in immediately set their processes correctly.

@@ -6,7 +6,7 @@ import string
 import globalData
 import re
 from textwrap import dedent
-from util import memory_unitizer
+from memory import memory_unitizer
 from log import logger
 import datetime
 
@@ -196,7 +196,6 @@ class cg_argparse:
             elif "cpulimit" in op:
                 logger.info("Setting cpu limit!")
                 if val == "0":
-                    logger.info("Defaulting cpu limit to: %f" % (globalData.configData.cpu_pct_max * (globalData.cores * globalData.cpu_period)))
                     try:
                         globalData.arr_cgroups[cgroup].fixed_cpuLimit = False
 
@@ -205,7 +204,6 @@ class cg_argparse:
                     except KeyError:
                         return "Unable to find cgroup %s to set cpu limit!" % cgroup
                 else:
-                    logger.info("Good CPU value")        
                     iVal = float(val) / 100
                     try:
                         globalData.arr_cgroups[cgroup].cpu_quota = iVal * (globalData.cores * globalData.cpu_period)
@@ -228,7 +226,8 @@ class cg_argparse:
                     globalData.arr_cgroups[cgroup].unpenaltybox()
             
             elif "default" in op:
-                pass
+                deflim = globalData.arr_cgroups[cgroup].def_limits
+                globalData.arr_cgroups[cgroup].setlimits(deflim['cpu'], memLim=deflim['mem'], shares=deflim['shares'])
         
         else: ## zero length should imply a global setting!
             if "memlimit" in op:

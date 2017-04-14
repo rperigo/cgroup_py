@@ -11,6 +11,7 @@ from multiprocessing import cpu_count
 from distutils.util import strtobool
 from pwd import getpwuid
 from memory import sys_memtotal
+from memory import memory_unitizer
 from string import split
 import sys
 import version
@@ -163,7 +164,7 @@ class config_holder(object):
 
             if 'pb_memoryBytes' == o:
                 try:
-                    self.pb_memoryBytes = cfg.getint('main', 'pb_memoryBytes')
+                    self.pb_memoryBytes = memory_unitizer(cfg.get('main', 'pb_memoryBytes'))
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'pb_memoryBytes' )
 

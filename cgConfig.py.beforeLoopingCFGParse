@@ -1,0 +1,361 @@
+# cgConfig.py
+#
+# This file contains configuration data / globals for the script that 
+# are NOT user-facing. That is, we'll have a separate config file, 
+# and this file will act as a way to store the resulting structures in
+# a way that the various python modules here can use them.
+######################################################################
+import ConfigParser
+import os
+from string import letters as C_LETTERS
+from util import findCGRoot, guessUnit_ReturnBytes
+from multiprocessing import cpu_count
+
+# CONSTANTS
+C_MEGA = 1024 ** 2
+C_GIGA = 1024 ** 3
+C_USERCONFIG_VARS = ["cpuLimit", "cpuShares", "memLimit", "lockToCores"]
+
+# SET SOME DEFAULT VALUES
+# These values can all be updated by 
+# functions in this module, or anywhere in the 
+# package. 
+##################################
+
+#list of user configfiles
+userconfigs = list()
+
+tick = 0                # tick (counts number of cycles)
+refresh = 1024 ** 3     # number of cycles after which to reset counter
+interval = 5            # interval between loops (in seconds!)
+minUID = 500            # minimum UID
+logfile = "/var/log/cgroup_py.log"      # error / activity log location
+throttle_logfile = "/tmp/cgroup_py/throttle.log"   # throttle event log
+
+initMode = "sysv"
+# CONSIDER MAKING THIS A UNIX SOCKET OR 
+# AT LEAST A DAMN PSEUDOFILE
+monitor_logfile = "/tmp/cgroup_py/monitor" ## real-time monitoring dumpfile
+
+# CPU limits, settings
+cpu_pct_max = 90
+reservedCores = 0
+cpu_coreCount = cpu_count()
+cgroup_memoryLimit = 4 * C_GIGA
+
+# Method for notifying user of things
+# Current options are ThinLinc (TL), or CLI
+# We COULD build a zenity thing to do it
+# on non-TL graphical multiuser VNC environs, but it's MESSY
+
+notificationMethod = "CLI"
+
+# root folders for cgroup mounts.
+#cgroup_root = "/cgroup"
+
+cgroup_root = findCGRoot()
+
+cgroup_cpu_root = "%s/cpu" % cgroup_root
+cgroup_cpuset_root = "%s/cpuset" % cgroup_root
+cgroup_cpuacct_root = "%s/cpuacct" % cgroup_root
+cgroup_mem_root = "%s/memory" % cgroup_root
+
+# optional value for a subfolder of the root that
+# houses the individual cgroups (when per-user)
+# Use case: CentOS 7 has a hierarchy
+# like /sys/fs/cgroup/cpu/user.slice/user-XXX.slice
+cgroup_global_subfolder = ""
+enableMonitoring = False
+dict_cgroups = dict()
+dict_cpuinfo = dict()
+
+
+
+def parseConfigFile():
+
+    # Globalize variables to make sharable changes.
+    # This lets us directly edit the above globals, and easily share changed data
+    # between modules.
+
+    global userconfigs, tick, refresh, interval, minUID, logfile, throttle_logfile
+    global monitor_logfile, cpu_pct_max, reservedCores, cgroup_memoryLimit, notificationMethod
+    global cgroup_root, cgroup_cpu_root, cgroup_cpuset_root, cgroup_cpuacct_root, cgroup_mem_root
+    global cgroup_global_subfolder, enableMonitoring, dict_Cgroups
+
+
+
+    cfg = ConfigParser.SafeConfigParser()
+    try:
+        cfg.read('/etc/cgroup_py/cgroup_py.conf')
+    except IOError:
+        logger.warning("Unable to parse configuration file!")
+        sys.exit(2)
+
+    # Parse cfgfile, set vars accordingly. Python error handling is ugly, but we've at 
+    # least got sane input handling and seamless defaulting of options if cfgFile is bad.
+    # If an option cannot be found, it will just use the default. If an option is set in
+    # the file, it prints the problem both to the log and stderr before exitng.
+
+    try:
+        minUID = cfg.getint('main', 'minUID')
+        if minUID < 0:
+            raise ValueError('Value of minUID is negative - %d' % minUID)
+    except ValueError as e:
+        eMsg = "Bad value for minUID: %s. Exiting " % e
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        sys.exit(2)
+    except ConfigParser.NoOptionError as e:
+      #  minUID = def_cfgOptions['minUID']
+        logger.warning("Missing value for minUID, using default. %s", e)
+        if verbose:
+            print >> sys.stderr, "Missing value for minUID, using default: %d" % minUID
+
+    try:        
+        cpu_pct_max = (cfg.getfloat('main', 'cpu_pct_max'))
+        if coreThreshold > 100 or coreThreshold < 1:
+            raise ValueError("CoreThreshold out of range. Expected 1-100, found %s" % coreThreshold)
+        coreThreshold = coreThreshold / 100
+    except ValueError as e:
+        eMsg = "Bad value for Max CPU Percent: %s. Exiting " % e
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        sys.exit(2)
+    except ConfigParser.NoOptionError as e:
+        #cpu_pct_max = def_cfgOptions['cpu_pct_max']
+        logger.warning("Missing value for coreThreshold, using default. %s", e)
+        if verbose:
+            print >>sys.stderr, "Missing value for coreThreshold. Using default: %f" % coreThreshold
+
+    try:    
+        cgroup_memoryLimit = cfg.getfloat('main', 'memoryLimit')
+        if totalMem < 0:
+            raise ValueError("Memory limit is negative: %f" % totalMem)
+    except ValueError as e:
+        eMsg = "Bad value for memoryLimit: %s. Exiting " % e
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        sys.exit(2)
+    except ConfigParser.NoOptionError as e:
+    #    totalMem = def_cfgOptions['totalMem']
+        logger.warning("Missing value for memoryLimit, using default. %s", e)
+        if verbose:
+            print >> sys.stderr, "Missing value for memory limit. Using default: %f" % totalMem
+
+    try:
+        activityThreshold = (cfg.getfloat('main', 'activityThreshold'))
+        if activityThreshold <=0 or activityThreshold > 100:
+            raise ValueError("Activity Threshold out of range. Expected .1 > 100, found: %f" % activityThreshold)
+        activityThreshold = activityThreshold / 100
+    except ValueError as e:
+        eMsg = "Bad value for activityThreshold: %s. Exiting " % e
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        sys.exit(2)
+    except ConfigParser.NoOptionError as e:
+        #activityThreshold = def_cfgOptions['activityThreshold']
+        logger.warning("Missing value for activityThreshold, using default. %s", e)
+        if verbose:
+            print >> sys.stderr, "Missing value for activity threshold. Using default: %f" % activityThreshold
+
+    try:
+        interval = cfg.getfloat('main', 'interval')
+        if interval <= 0:
+            raise ValueError("Interval value is negative: %d." % interval)
+    except ValueError as e:
+        eMsg = "Bad value for interval: %s. Exiting " % e
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        sys.exit(2)
+    except ConfigParser.NoOptionError as e:
+     #   interval = def_cfgOptions['interval']
+        logger.warning("Missing value for interval, using default. %s", e)
+        if verbose:
+            print >> sys.stderr, "Missing value for interval / tick rate. Using default value: %f" % interval
+
+    try:
+        reservedCores = cfg.getint('main', 'reservedCores')
+        if reservedCores < 0:
+            raise ValueError("Cannot reserve negative CPU cores: %d" % reservedCores)
+        elif reservedCores > cpusMax:
+            eMsg = ("Attempting to reserve too many CPU cores for root processes.",
+                    " System has %d cores, tried to reserve %d" % (c, reservedCores))
+            raise ValueError(msg)
+    except ValueError as e:
+        eMsg = "Bad value for reservedCores: %s. Exiting " % e
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        sys.exit(2)
+    except ConfigParser.NoOptionError as e:
+    #    reservedCores = def_cfgOptions['reservedCores']
+        logger.warning("Missing value for reservedCores, using default. %s", e)
+        if verbose:
+            print >> sys.stderr, "Missing value for reserved cores. Using default: %d" % reservedCores
+
+
+    # IS THIS NECESSARY?
+    # We should replace with a simple per-user timer.
+
+    # try:
+    #     refresh = cfg.getint('main', 'refreshPeriod')
+    # except ValueError as e:
+    #     eMsg = "Bad value for refresh: %s. Exiting " % e
+    #     print >> sys.stderr, eMsg
+    #     logger.error(eMsg)
+    #     sys.exit(2)
+    # except ConfigParser.NoOptionError as e:
+    #     refresh= def_cfgOptions['refresh']
+    #     logger.warning("Missing value for refresh. Using default. %s", e)
+    #     if verbose:
+    #         print >> sys.stderr, "Missing value for memory monitor refresh. Using default: %d" % refresh
+    
+    try:
+        enableMonitoring = cfg.getboolean('main', 'enableMonitoring')
+    except (ValueError, ConfigParser.NoOptionError) as e:
+        eMsg = ("Malformed value for enableMonitoring. Must be boolean."
+                " Disabling monitoring.")
+        print >> sys.stderr, eMsg
+        logger.error(eMsg)
+        enableMonitoring = False
+     
+
+   
+   # End Massive ConfigParser try/except block.
+
+
+# Let's find some per-user config!
+# This will let us treat individual users extra-poorly.
+# Or more nicely, if that's your bag.
+
+# Will also parse files outlining non-user cgroups
+# TODO: Cleanup, proper error handling
+
+def getCgroupConfigs():
+    origCWD = os.getcwd()
+    secname = "cgroup"
+    try:
+        os.chdir('/etc/cgroup_py/cgroups.d')
+    except (OSError, IOError) as e:
+        return 2
+    
+    dFiles = os.listdir(os.getcwd())
+    if dFiles:
+        for f in dFiles:
+            if ".conf" in f:
+                userconfigs.append(os.path.abspath(f))
+    
+    for f in userconfigs:
+        uname = ""
+        udict = dict()
+        userconf = ConfigParser.SafeConfigParser()
+        try:
+            userconf.read('%s/%s' % (os.getcwd(), f))
+        except (IOError, OSError) as e:
+            print "Unable to load userconfig file: %s" % f
+            continue
+        
+        try:
+            userNames = userconf.get(secname, 'unames').split(',')
+        except (ConfigParser.NoOptionError, ValueError) as e:
+            pass
+
+        try:
+            UIDS = userconf.get(secname, 'uids').split(',')
+        except:
+            pass
+
+        try:
+            GIDS = userconf.get(secname, 'gids').split(',')
+        except:
+            pass
+        # try:
+        #     uname = userconf.sections()[0] # Conf should have one section named with appropriate username
+
+        # except:
+        #     print "Something went wrong with userconfig %s. Unable to find appropriate section." % f
+        #     continue
+        
+        # for i in C_USERCONFIG_VARS:
+        #     try:
+        #         udict[i] = userconf.get(uname, i)
+        #     except (ConfigParser.NoOptionError) as e:
+        #         print "No option in userconfig %s for %s" % (f, i)
+           
+        try:
+           cpuLimit = userconf.getFloat(secname, 'cpuLimit')
+        except (ConfigParser.NoOptionError, ValueError) as e:
+            print "Bad option for %s: %s" % (uname, e)
+
+        try: # Parse user memlimit
+            rawstr =  userconf.get(secname, 'memLimit')
+            rawstr = rawstr.translate(None, ' bB') # get rid of any spaces and 
+            if rawstr.count('.') > 1:
+                raise ValueError("Too many periods in number for memlimit!")
+            
+            
+            size = rawstr[-1]
+
+            if size in C_LETTERS:
+
+                size = size.lower()
+                digits = float(rawstr[:-1])
+           
+
+                if size == "g":
+                    memLimit = digits * C_GIGA
+                elif size == 'm':
+                    memLimit = digits * C_MEGA
+                elif size == 'k':
+                    memLimit = digits * 1024
+                else:
+                    print "Bad size for memlimit on user: %s" % uname
+                    memLimit = cgroup_memoryLimit
+                
+            else: 
+                
+                # If last character of entry isn't a letter, assume all digits.
+                # Do some guesswork based on length of string before decimal
+                # if it exists to arrive at a conclusion for whether the input
+                # should be considered as K, M, or Gbytes. 
+
+                memLimit = guessUnit_ReturnBytes(rawstr)
+                
+        except (ConfigParser.NoOptionError, ValueError):
+            print "Unable to get memlimit for user: %s" % uname
+        
+        # End Memlimit parse 
+
+        try:
+            cpuShares = userconf.getint(secname, 'cpuShares')
+        except (ConfigParser.NoOptionError, ValueError):
+            print "Unable."
+        
+        try:
+            # TODO: Add logic to make sure this looks right.
+            # Allowed complexity of cpuset makes it difficult
+            # to parse out everything that *COULD* break config.
+
+            rawstr = userconf.get(uname, 'lockedToCores')
+            lockedToCores = rawstr
+        except (ConfigParser.NoOptionError, ValueError):
+            print "NO."
+
+def findInitStyle():
+    try:
+        subprocess.check_call(['systemctl', '--version'])
+        initMode = 'sysd'
+        logger.info('Systemctl found / runnable. Using systemd-style cgroup subsystems')
+        if verbose:
+            print >> sys.stdout, "Using systemd mode"
+        
+    except (subprocess.CalledProcessError) as e:
+        msg ="Systemctl found, but error occurred: %s. Exiting!" % e
+        print >> sys.stderr, msg
+        logger.error(msg)
+        sys.exit(2)
+
+    except (OSError) as e:
+        initStyle = 'sysv'
+        logger.info("Systemctl not found. Using sysV-style cgroups")
+        if verbose:
+            print >> sys.stdout, "Unable to find systemctl binary. Assuming SysVInit."

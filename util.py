@@ -1,4 +1,4 @@
-
+import re
 import os, subprocess, logging, cgConfig
 from string import letters, digits
 from multiprocessing import cpu_count
@@ -322,6 +322,8 @@ def shouldRunMemnotify(user, usedMem, memLimit, badboyz_added, badboyz_usage, to
 # Guess which unit is meant based on string length
 # and returns a byte value 
 
+## TODO: Nix this? Redundant with memory_unitizer in place
+
 def guessUnit_ReturnBytes(rawstr):
     
     digits = float(rawstr)
@@ -342,17 +344,3 @@ def guessUnit_ReturnBytes(rawstr):
     
     return bites
 
-## Parse string representing memory size, return int in bytes
-def memory_unitizer(val):
-    oval = 0
-    ## Convert value based on unit
-    if any(u in val for u in ("k", "K")):
-        oval = int(val[:-1]) * 1024
-    elif any(u in val for u in("m", "M")):
-        oval = int(val[:-1]) * 1024 ** 2
-    elif any(u in val for u in ("g", "G")):
-        oval = int(val[:-1]) * 1024 ** 3
-    else:
-         oval = int(val)
-
-    return oval

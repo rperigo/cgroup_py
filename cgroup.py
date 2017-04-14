@@ -60,7 +60,7 @@ class cgroup:
     fixed_cpuLimit = bool() # Fixed either by config or penaltybox
     fixed_memLimit = bool()
     throttled = bool()
-    def_limits = {"cpu":0, "mem": 0, "cpushares":1024}
+    def_limits = {"cpu":0, "mem": 0, "cpushares":1024} ## TODO: implement per-cgroup permanent configs, pull that
     
     ## Init this beast.
     def __init__(self, uid, svc=[], ident="", tasklist=[]):
@@ -206,6 +206,12 @@ class cgroup:
     ## sets limits for this cgroup. CPU limit is MANDATORY
     ## memory limit, CPU shares are defaulted to system defaults (but can take an optional value)
     def setlimits(self,cpuLim, memLim=configData.cgroup_memoryLimit_bytes, shares=1024):
+        
+        ## take '0' as a defaulter. 
+        if cpuLim == 0:
+            cpuLim = configData.cpu_pct_max * (cores * cpu_period)
+        if memLim = 0:
+            memLim = memLim = configData.cgroup_memoryLimit_bytes
         
         if initStyle == "sysv":
             with open("%s/cpu.shares" % self.cpu_cgroup_path, 'w') as f:
