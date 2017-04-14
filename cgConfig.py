@@ -15,8 +15,8 @@ from memory import memory_unitizer
 from string import split
 import sys
 import version
-
-
+from socket import gethostname
+from textwrap import dedent
 class config_holder(object):
     
    
@@ -174,6 +174,12 @@ class config_holder(object):
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error(_ERR_MSG % 'admin_email')
             
+            if 'sending_email' == 0:
+                try:
+                    self.sending_email = cfg.get('main', 'sending_email')
+                except (ValueError, ConfigParser.InterpolationError) as e:
+                    logger.error(_ERR_MSG % 'sending_email')
+
             if 'user_email_domain' == o:
                 try:
                     self.user_email_domain = cfg.get('main', 'user_email_domain')
@@ -189,6 +195,7 @@ class config_holder(object):
     
     def __init__(self):  # Init, set defaults.
         self.maxGigs = sys_memtotal()
+        self.hostname = gethostname()
         self.cpushares = 1024
         self.penaltyTimeout = 3600 ## Timeout value for penaltyboxed users
         self.pb_cpupct = .30 ## CPU limit (percent) of penaltyboxed users
@@ -199,6 +206,7 @@ class config_holder(object):
         self.minUID = 1000 
         self.cpu_pct_max = .90
         self.admin_email = 'root@localhost'
+        self.sending_email = 'cgroups@%s' % self.hostname
         self.user_email_domain = 'localhost'
         self.cgroup_memoryLimit_gigs = (self.maxGigs / 4) / (1024 ** 3)
         self.cgroup_memoryLimit_per = .25
@@ -217,9 +225,25 @@ class config_holder(object):
         self.rotateTime = '2:30'
         self.notificationMethod = 'CLI'
         self.cgprefix = 'cg_'
-        # TODO: Document the SHIT out of this very important option
+        # TODO: Document this very important option
         self.throttleMode = 'even_active' # "even_active|hard_cap"
         self.msglog_dateformat = '%b %d %H:%M:%S'
+
+        ## Default message to send users when they OOM.
+        try:
+            with open('/etc/cgroup_py/oom_email.txt', 'r') as oomfile:
+                self.oom_message = oomfile.read().splitlines()
+        except (OSError, IOError, FileNotFoundError) as e:
+            logger.error("Unable to load oom message textfile. Using default. %s" % e)
+            self.oom_message = dedent("""
+                This email is to inform you that a process within your cgroup on %s has gone out
+                of memory, and was killed. In order to ensure fair use of the system, a memory
+                limit of %s megabytes is in place for each user account. Please contact support
+                if you have further questions about this policy and help in keeping this message
+                from appearing in the future. 
+
+                Thank you.
+                """ % (self.hostname, (self.cgroup_memoryLimit_bytes * (1024 ** 2)))) 
     def dumpconfig(self):
         out = "\n"
         out += "CgrouPynator v. %f\n" % version.version

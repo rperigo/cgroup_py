@@ -230,8 +230,10 @@ class cgroup:
                 memLim = UInt64(memLim)
                 
                 ## Use systemd to set limits directly on this bad boy 
-                dbg = systemd_interface.SetUnitProperties(self.ident, 'true', [("CPUShares", shares), ("CPUQuotaPerSecUSec", cpuLim), ("MemoryLimit", memLim)])
-                logger.warning("Systemd line debug: %s" % dbg)
+                try:
+                    systemd_interface.SetUnitProperties(self.ident, 'true', [("CPUShares", shares), ("CPUQuotaPerSecUSec", cpuLim), ("MemoryLimit", memLim)])
+                except Exception as e:
+                    logger.error("Unable to set defined cgroup limits for: %s" % self.ident)
                 if self.noswap:
                     try:
                         # with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
