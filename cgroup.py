@@ -10,13 +10,6 @@ import json
 from systemd import systemd_interface # CONNECT TO SYSTEMD WITH GREAT JUSTICE
 from os import listdir as ls
 from os import stat
-## Leftovers from trying to put oomailer in here.
-## TODO: Remove commented imports
-# from os import open as opn
-# from os import write
-# from os import close
-# from os import read
-# from os import O_WRONLY, O_RDONLY
 from pwd import getpwuid
 from globalData import initStyle, configData, cores, cpu_period
 from globalData import cpu_cgroup_root, cpuset_cgroup_root, cpuacct_cgroup_root
@@ -26,6 +19,7 @@ from datetime import datetime
 from datetime import timedelta
 from log import logger ## Yo dog, I heard you liked to log.
 import threading
+import oom_thread
 
 ## class cgroup
 ##
@@ -130,7 +124,7 @@ class cgroup:
         self.fixed_cpuLimit = False
         self.fixed_memLimit = False
         ## Rock the OOM monitor thread out. 
-        self.oom_thread = memory.oom_thread(self.ident, self.mem_cgroup_path, configData.msglog_dateformat, self.UIDS[0])
+        self.oom_thread = oom_thread.oom_thread(self.ident, self.mem_cgroup_path, configData.msglog_dateformat, self.UIDS[0])
         self.oom_thread.start()
        
 
@@ -210,7 +204,7 @@ class cgroup:
         ## take '0' as a defaulter. 
         if cpuLim == 0:
             cpuLim = configData.cpu_pct_max * (cores * cpu_period)
-        if memLim = 0:
+        if memLim == 0:
             memLim = memLim = configData.cgroup_memoryLimit_bytes
         
         if initStyle == "sysv":

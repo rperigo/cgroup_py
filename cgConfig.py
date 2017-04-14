@@ -17,6 +17,8 @@ import sys
 import version
 from socket import gethostname
 from textwrap import dedent
+from log import logger
+
 class config_holder(object):
     
    
@@ -233,7 +235,7 @@ class config_holder(object):
         try:
             with open('/etc/cgroup_py/oom_email.txt', 'r') as oomfile:
                 self.oom_message = oomfile.read().splitlines()
-        except (OSError, IOError, FileNotFoundError) as e:
+        except (OSError, IOError) as e:
             logger.error("Unable to load oom message textfile. Using default. %s" % e)
             self.oom_message = dedent("""
                 This email is to inform you that a process within your cgroup on %s has gone out
