@@ -10,6 +10,7 @@
 ##
 #####################################################################################################
 
+import os
 import util
 import getopt
 import sys
@@ -33,17 +34,46 @@ import threading
 
 def main(args):
     
+    pidfile = "/var/run/cgpy.pid"
+    daemon_pid = str(os.getpid())
+    if os.path.exists(pidfile):
+        try:
+            with open(pidfile, 'r') as pfile:
+                saved_pid = pfile.read()
+
+            if saved_pid == daemon_pid:
+                pass
+            else:
+                logger.error("Our PID doesn't match the saved PID! Exiting!")
+                print >>sys.stderr, "Our PID doesn't match the saved PID! Exiting!"
+                logger.error("If you are sure the daemon is dead, please remove the pid file.")
+                sys.exit(2)
+        except (IOError, OSError) as e:
+            logger.error("Found PID file but cannot read! May be corrupted. Exiting!")
+            sys.exit(2)
+    else:
+        logger.info("PID file not found. We may have been manually started.")
+        logger.info("Writing our PID to file, then.")
+        with open(pidfile, 'w') as pfile:
+            pfile.write(daemon_pid)
+    
+        
+    
     stop = 0  ## on/off switch for main loop
 
     logger.info("=============================================")
     logger.info("======  Starting up CgrouPynator ============")
     logger.info("=============================================")
-
+    logger.info(globalData.configData.dumpconfig())
+    
+    if not os.path.isdir('/tmp/cgroup_py'):
+        os.mkdir('/tmp/cgroup_py', 0755)
     # should be pid:uid. Allows us to gather active PIDs more efficiently by statting
     # only newly-added pidfolders rather than doing an ls+stat on each run.
     arr_active_pids, arr_pids_by_user = util.getActivePids()
 
-    
+    logger.info("Starting memory limit in bytes: %d" % globalData.configData.cgroup_memoryLimit_bytes)
+
     for u in arr_pids_by_user:
         if int(u) >= globalData.configData.minUID:
             if globalData.initStyle == "sysd":
@@ -51,8 +81,23 @@ def main(args):
                 ## TODO: Try to find a way to replace with a direct systemd call?
                 subprocess.check_call(["systemctl", "set-property", "--runtime", 
                                         "user-%d.slice" % u, "CPUAccounting=yes", "MemoryAccounting=yes",
-                                        "BlockIOAccounting=yes", "MemoryLimit=%d" % globalData.configData.cgroup_memoryLimit_bytes])
+                                        "BlockIOAccounting=yes"])
+
+                
+            else:
+                logger.info("Staging cgroup directory for user ID %s" % u)
+                for directory in globalData.cgroup_roots:
+                    try:
+                        os.mkdir('%s/%s%s' %( directory, globalData.configData.cgprefix, u))
+                    except (OSError, IOError) as e:
+                        logger.error("Unable to create cgroup dir %s for user %s: %s" %( directory, u, e))
+            cpuLim = (globalData.configData.cpu_pct_max * (globalData.cpu_period * globalData.cores))
             globalData.arr_cgroups[u] = cgroup.cgroup(u, tasklist=arr_pids_by_user[u])
+            globalData.arr_cgroups[u].setlimits(cpuLim, memLim=0)
+            # with open('%s/%s' % (globalData.arr_cgroups[u].mem_cgroup_path, "memory.limit_in_bytes"), 'w') as mf:
+            #     mf.write(str(globalData.configData.cgroup_memoryLimit_bytes))
+            # with open('%s/%s' % (globalData.arr_cgroups[u].mem_cgroup_path, "memory.memsw.limit_in_bytes"), 'w') as mf:
+            #     mf.write(str(globalData.configData.cgroup_memoryLimit_bytes))
     
     sys_cputotals = getCPUTotal([0,0,0,0]) ## Get first system CPU totals to build deltas.
         
@@ -69,7 +114,20 @@ def main(args):
         logger.info("===================================================")
         
         stop = 1
+        try: 
+            with open(pidfile, 'r') as pfile:
+                saved_pid = pfile.read()
+        except (IOError, OSError) as e:
+            logger.error("Unable to load pid file on close!")
+        if saved_pid == daemon_pid:
+            try:
+                os.remove(pidfile)
+            except (IOError, OSError) as e:
+                logger.error("Could not clean up PID file $s. Please ensure it is not locked!")
+        else:
+            logger.error("Could not clean up PID file $s. Please ensure it is not locked!")
         
+
         for cg in globalData.arr_cgroups.keys():
             globalData.arr_cgroups[cg].setlimits(globalData.cores * globalData.cpu_period, memLim=globalData.configData.maxGigs, shares=1024)
             globalData.arr_cgroups[cg].oom_thread.active.clear()
@@ -94,6 +152,7 @@ def main(args):
         sys_cputotals = getCPUTotal(sys_cputotals)
         arr_active_pids, arr_pids_by_user = util.getActivePids()
         inactive_cpu = 0
+        to_delete = list()
 
         ## TODO: Do something about CPU usage for users who have been manually limited/penaltyboxed 
         ## so that the algo takes that into consideration
@@ -101,24 +160,48 @@ def main(args):
             if not u in globalData.arr_cgroups and int(u) >= globalData.configData.minUID:
                 if globalData.initStyle == "sysd":
                     logger.info("Initing systemd slice for user ID %s" % u)
-                    subprocess.check_call(["systemctl", "set-property", "--runtime", "user-%s.slice" % u, 
-                                            "CPUAccounting=yes", "MemoryAccounting=yes", "BlockIOAccounting=yes",
-                                            "MemoryLimit=%d" % globalData.configData.cgroup_memoryLimit_bytes])
-                globalData.arr_cgroups[u] = cgroup.cgroup(u, tasklist=arr_pids_by_user[u]) ## Create cgroup data structure
+                    try:
+                        subprocess.check_call(["systemctl", "set-property", "--runtime", "user-%s.slice" % u, 
+                                         "CPUAccounting=yes", "MemoryAccounting=yes", "BlockIOAccounting=yes"])
+                    except Exception as e:
+                        logger.error("Systemd failed to create slice for %s!" % u)
+                        logger.error(e)
+                    
+                else:
 
+                    logger.info("Staging cgroup directory for user ID %s" % u)
+                    for directory in globalData.cgroup_roots:
+                        try:
+                            os.mkdir('%s/%s%s' %( directory, globalData.configData.cgprefix, u))
+                        except (OSError, IOError) as e:
+                            logger.error("Unable to create cgroup dir %s for user %s: %s" %( directory, u, e))
+                globalData.arr_cgroups[u] = cgroup.cgroup(u, tasklist=arr_pids_by_user[u]) ## Create cgroup data structure
+                globalData.arr_cgroups[u].setlimits(cpuLim, memLim=0)
         ## Step through known cgroups, update their tasklists, get their CPU usage info.
         ## Check for total active users before implementing CPU limits.        
         for c in globalData.arr_cgroups.keys():
-            globalData.arr_cgroups[c].updateTasks(arr_pids_by_user[c])
-            globalData.arr_cgroups[c].getCPUPercent(sys_cputotals)
-            globalData.names[globalData.arr_cgroups[c].ident] = c
-            if not globalData.arr_cgroups[c].isActive and (globalData.arr_cgroups[c].penaltyboxed or globalData.arr_cgroups[c].fixed_cpuLimit):
-                inactive_cpu += globalData.arr_cgroups[c].cpu_quota
-            if globalData.arr_cgroups[c].isActive: ## If over activity threshold, append to active Cgroups.
-                num_active.append(c)
-        
+            if not c in arr_pids_by_user:
+                to_delete.append(c) 
+            try:
+                globalData.arr_cgroups[c].updateTasks(arr_pids_by_user[c])
+                globalData.arr_cgroups[c].getCPUPercent(sys_cputotals)
+                globalData.names[globalData.arr_cgroups[c].ident] = c
+                if not globalData.arr_cgroups[c].isActive and (globalData.arr_cgroups[c].penaltyboxed or globalData.arr_cgroups[c].fixed_cpuLimit):
+                    inactive_cpu += globalData.arr_cgroups[c].cpu_quota
+                if globalData.arr_cgroups[c].isActive: ## If over activity threshold, append to active Cgroups.
+                    num_active.append(c)
+            except KeyError as e:
+                logger.info("It's Broked: %s" % e)
+                pass # Just keep on trucking - an exception here just means a user logged out 
+                     # somewhere in the block and we lost their key
+            except:
+                logger.error("DEBUG: Something really broked: %s" % e)
+            for c in to_delete:
+                logger.info("No more tasks for %s, removing!" % c)
+                del globalData.arr_cgroups[c]
         ## This is our default mode, splitting CPU among active users
         ## (subtracting CPU used by non-active users for fairness)
+        logger.info(str(num_active))
         if globalData.configData.throttleMode == "even_active" and len(num_active) > 1:
             cpuLim = (globalData.configData.cpu_pct_max * ((globalData.cpu_period * globalData.cores) - inactive_cpu)) / len(num_active)
         
@@ -142,10 +225,12 @@ def main(args):
                         globalData.arr_cgroups[c].unpenaltybox()
                 elif globalData.arr_cgroups[c].fixed_cpuLimit:
                     globalData.arr_cgroups[c].setlimits(globalData.arr_cgroups[c].cpu_quota)
-                elif globalData.arr_cgroups[c].isActive: # Set appropriate limits if cgroup is active.
+               # elif globalData.arr_cgroups[c].isActive: # Set appropriate limits if cgroup is active.
+                else:
                     globalData.arr_cgroups[c].cpu_quota = cpuLim
                     globalData.arr_cgroups[c].setlimits(cpuLim)
             except KeyError:
+                logger.info("Cgroup Left. Carrying on")
                 pass 
                 ## If our cgroup left, carry on. No need to log, this just stops 
                 ## segfaults if a user logs out at just the wrong time.
@@ -153,7 +238,7 @@ def main(args):
                 
         time.sleep(globalData.configData.interval)
 
-    
+    signal.pause()
 if __name__ == "__main__":
     main(sys.argv[1:])
 

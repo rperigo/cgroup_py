@@ -18,6 +18,15 @@ import version
 from socket import gethostname
 from textwrap import dedent
 from log import logger
+import subprocess
+
+def check_tl():
+        try:
+            if os.path.exists('/opt/thinlinc/sbin/tl-notify'):
+                return 'TL'
+        except (OSError, IOError) as e:
+            return 'CLI'
+            logger.error('Unable to verify presence of ThinLinc installation. Defaulting to CLI notifier.')
 
 class config_holder(object):
     
@@ -36,8 +45,14 @@ class config_holder(object):
         except (OSError, IOError, ConfigParser.NoSectionError, ConfigParser.InterpolationError) as e:
             logger.error("ERROR opening config file: %s" % e)
             sys.exit(2)
-        for o in cfgOptions:
 
+        for o in cfgOptions:
+            if 'forceLegacy' == o:
+                try:
+                    self.forceLegacy = cfg.getboolean('main', 'forceLegacy')
+                except (ValueError, ConfigParser.InterpolationError) as e:
+                    logger.error(_ERR_MSG % 'forceLegacy')
+                    
             if 'interval' == o:
                 try:
                     self.interval = cfg.getint('main', 'interval')
@@ -88,13 +103,13 @@ class config_holder(object):
 
             if 'lower_throttlethresh' == o:
                 try:
-                    self.lower_ThrottleThresh = cfg.getfloat('main', 'lower_ThrottleThresh')
+                    self.lower_ThrottleThresh = (cfg.getfloat('main', 'lower_ThrottleThresh') / 100)
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'lower_ThrottleThresh' )
             
             if 'upper_throttlethresh' == o:
                 try:
-                    self.upper_ThrottleThresh = cfg.getfloat('main', 'upper_ThrottleThresh')
+                    self.upper_ThrottleThresh = (cfg.getfloat('main', 'upper_ThrottleThresh') / 100)
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'upper_ThrottleThresh' )
             
@@ -194,10 +209,29 @@ class config_holder(object):
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error(_ERR_MSG % 'msglog_dateformat')
             
+            if 'throttle_log' == o:
+                try:
+                    self.msglog_dateformat = cfg.get('main', 'throttle_log')
+                except (ValueError, ConfigParser.InterpolationError) as e:
+                    logger.error(_ERR_MSG % 'throttle_log')
+            
+            if 'nag_ratelimit' == o:
+                try:
+                    self.msglog_dateformat = cfg.get('main', 'nag_ratelimit')
+                except (ValueError, ConfigParser.InterpolationError) as e:
+                    logger.error(_ERR_MSG % 'nag_ratelimit')
+
+            if 'system_name' == o:
+                try:
+                    self.system_name = cfg.get('main', 'system_name')
+                except (ValueError, ConfigParser.InterpolationError) as e:
+                    logger.error(_ERR_MSG % 'system_name')
     
     def __init__(self):  # Init, set defaults.
+        self.forceLegacy = False
         self.maxGigs = sys_memtotal()
         self.hostname = gethostname()
+        self.system_name = "A System"
         self.cpushares = 1024
         self.penaltyTimeout = 3600 ## Timeout value for penaltyboxed users
         self.pb_cpupct = .30 ## CPU limit (percent) of penaltyboxed users
@@ -210,25 +244,28 @@ class config_holder(object):
         self.admin_email = 'root@localhost'
         self.sending_email = 'cgroups@%s' % self.hostname
         self.user_email_domain = 'localhost'
-        self.cgroup_memoryLimit_gigs = (self.maxGigs / 4) / (1024 ** 3)
+        self.cgroup_memoryLimit_gigs = (self.maxGigs / 4.0 ) / (1024 ** 3)
         self.cgroup_memoryLimit_per = .25
-        self.cgroup_memoryLimit_bytes = self.cgroup_memoryLimit_gigs * (1024 **3)
+        self.cgroup_memoryLimit_bytes = int(self.cgroup_memoryLimit_gigs * (1024 **3))
         self.pb_memoryBytes = self.cgroup_memoryLimit_bytes
         self.cgroup_root = findCGRoot()
         self.activityThreshold = .15 
         self.reservedCores = 0 
         self.refresh = 1440
+        self.nag_ratelimit = 1440 ## REPLACES REFRESH!
         self.lower_ThrottleThresh = .85 # These two are used to tweak when the
         self.upper_ThrottleThresh = .95 # monitor claims a user is being throttled
         self.enableMonitoring = True
         self.shouldMemoryNag = True
         self.shouldCPUNag = False
         self.throttleMsg = "CPU usage being throttled to ensure system performance."
+        self.mem_nag_msg = "WARNING. Memory usage for this account is nearing the limit. If this limit is passed, the process using the most RAM will be killed automatically. Current usage is %sM"
         self.rotateTime = '2:30'
-        self.notificationMethod = 'CLI'
+        self.notificationMethod = check_tl()
         self.cgprefix = 'cg_'
         # TODO: Document this very important option
         self.throttleMode = 'even_active' # "even_active|hard_cap"
+        self.throttle_log = '/tmp/cgroup_py/throttle.log'
         self.msglog_dateformat = '%b %d %H:%M:%S'
 
         ## Default message to send users when they OOM.
@@ -245,7 +282,8 @@ class config_holder(object):
                 from appearing in the future. 
 
                 Thank you.
-                """ % (self.hostname, (self.cgroup_memoryLimit_bytes * (1024 ** 2)))) 
+                """ % (self.hostname, (self.cgroup_memoryLimit_bytes / (1024 ** 2))))
+      
     def dumpconfig(self):
         out = "\n"
         out += "CgrouPynator v. %f\n" % version.version
@@ -257,7 +295,15 @@ class config_holder(object):
         out += "Interval: %d seconds\n" % self.interval
         return out
 
-        
+    def check_tl(self):
+        try:
+            subprocess.check_call(['which', 'tl-notify'])
+            self.notificationMethod = 'TL'
+        except subprocess.CalledProcessError as e:
+            self.notificationMethod = 'CLI'
+            logger.error('Unable to verify presence of ThinLinc installation. Defaulting to CLI notifier.')
+
+
 # Let's find some per-user config!
 # This will let us treat individual users extra-poorly.
 
@@ -373,28 +419,21 @@ def findCGRoot():
             cgMounts[4] = m.split()[1]
     return cgMounts
 
-    
-    
-            
 
-        
-    # OLD - simplifying and just returning a tuple of all relevant mounts as above. 
-    # # get cgMounts
-    # for l in mountpoints:
-    #     if 'cgroup' in l:
-    #         cgMounts.append(l)
-            
-    # if not cgMounts:
-    #     print >> sys.stderr, 'Cannot find existing CGroup mount. Is CGroups enabled in your kernel?'
-    #     logger.error('Cannot find existing CGroup mount. Is CGroups enabled in your kernel?')
-    #     return ''
+def get_tgid_statusline():
+    try:
+        pfolders = [p for p in os.listdir('/proc/') if p.isdigit()]
+        apid = pfolders[-1]
+        with open('proc/%s/status' % apid) as pf:
+            lines = pf.read().splitlines()
+            for l in range(0, len(lines)):
+                if "Tgid" in lines[l][:4]:
+                    return l
+                    break
+            else:
+                logger.error("Unable to determine /proc/PID/status format! Exiting!")
+                sys.exit(2)
+    except Exception as e:
+        logger.info(e)
 
-    # # parse cgmounts to get setup (e.g. individual hieararchies, or one big root hierarchy)
-    # for m in cgMounts:
-    #     if all(c in m for c in ('cpuset', 'memory', 'cpuacct')):
-    #         return m.split()[1]
-    #     elif 'cpu' in m:
-    #         tmpRoot = m.split()[1].split('/')
-    #         tmpRoot.pop()
-    #         tmpRoot = '/'.join(tmpRoot)
-    #         return tmpRoot
+tgid_statusline = get_tgid_statusline()

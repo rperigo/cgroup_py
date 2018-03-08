@@ -33,6 +33,7 @@ monitor_logfile = "/tmp/cgroup_py/monitor" ## real-time monitoring dumpfile
  
 cpu_cgroup_root, cpuset_cgroup_root, \
 cpuacct_cgroup_root, memory_cgroup_root, blkIO_cgroup_root = cgConfig.findCGRoot()
+cgroup_roots = ( cpu_cgroup_root, cpuset_cgroup_root, cpuacct_cgroup_root, memory_cgroup_root, blkIO_cgroup_root )
 
 ## This holds an instance of our configholder class. 
 ## We can then import the configData object from other modules

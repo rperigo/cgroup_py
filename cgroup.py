@@ -5,21 +5,29 @@
 #####################################################################################################
 
 import memory, cpu
+from string import letters, digits
 import subprocess
 import json
-from systemd import systemd_interface # CONNECT TO SYSTEMD WITH GREAT JUSTICE
+from collections import OrderedDict
 from os import listdir as ls
 from os import stat
 from pwd import getpwuid
 from globalData import initStyle, configData, cores, cpu_period
 from globalData import cpu_cgroup_root, cpuset_cgroup_root, cpuacct_cgroup_root
 from globalData import memory_cgroup_root, blkIO_cgroup_root
-from dbus import UInt64
-from datetime import datetime
-from datetime import timedelta
+import datetime
+from random import randrange
 from log import logger ## Yo dog, I heard you liked to log.
 import threading
 import oom_thread
+from util import gen_EventID
+import notification
+
+
+if initStyle == "sysd":
+    from systemd import systemd_interface # CONNECT TO SYSTEMD WITH GREAT JUSTICE
+    from dbus import UInt64
+    
 
 ## class cgroup
 ##
@@ -49,7 +57,7 @@ class cgroup:
     cpu_quota = float()
     cpu_cores = str()
     penaltyboxed = bool()
-    penaltybox_end = datetime(1980, 5, 21, 0, 0) # init to old time
+    penaltybox_end = datetime.datetime(1980, 5, 21, 0, 0) # init to old time
     cpu_shares = int()
     fixed_cpuLimit = bool() # Fixed either by config or penaltybox
     fixed_memLimit = bool()
@@ -64,9 +72,9 @@ class cgroup:
         if isinstance(uid, list):
             self.UIDS = list(uid)
         elif isinstance(uid, str) or isinstance(uid, int):
-            self.UIDS = [ uid ]
-        print str(self.UIDS)
+            self.UIDS = [ int(uid) ]
         if self.UIDS:
+            print("Determining Uname")
             for i in self.UIDS:
                 self.unames[i] = getpwuid(i)[0]
         ## TODO: Fully implement this.
@@ -120,18 +128,50 @@ class cgroup:
         self.cpu_shares = int()
         self.noswap = True
         self.isActive = False
+
+        ## Set up some vars to handle throttle event tracking
+        self.cur_throttle_start = None
+        self.cur_throttle_end = None
+        self.cur_throttle_length_secs = 0
+        self.cur_throttle_id = ""
+        self.cur_throttle_turns = 0
+        self.cur_throttle_avg_cpu = 0
+        self.cur_throttle_cpu_total = 0
+        self.throttle_grace = False
+        self.throttled = False
+        
         self.penaltyboxed = False
         self.fixed_cpuLimit = False
         self.fixed_memLimit = False
+        self.mem_limit = configData.cgroup_memoryLimit_bytes
+        self.mem_used_bytes = 0
+        self.cached_mem_bytes = 0
+        self.last_mem_nag = datetime.datetime(1980, 5, 21, 0, 0)
         ## Rock the OOM monitor thread out. 
         self.oom_thread = oom_thread.oom_thread(self.ident, self.mem_cgroup_path, configData.msglog_dateformat, self.UIDS[0])
         self.oom_thread.start()
-       
+        
+
+        ## init out memory swappiness when creating cgroup
+        if self.noswap:
+                    try:
+                        # with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                        #     f.write(str(memLim))
+                        with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
+                            f.write(str(0))
+                    except (OSError, IOError) as e:
+                        logger.debug("Unable to set swappiness for cgroup! %s. More information: %s" % (self.ident, e))
+                        ## For whatever reason, trying to write directly to either this file or memory.memsw.limit_in_bytes likes to fail
+                        ## ... randomly. Have not been able to find a pattern in it - sometimes it works, sometimes it doesn't.
+                    except:
+                        pass
 
 
     ## func updateTasks()
     ## get tasks attached to the cgroup
     def updateTasks(self, tasklist):
+
+        ## We take a list of PIDs grabbed from /proc by another function.
         taskslast = list()
         self.tasks = list(tasklist) # pass in array of tasks for this cgroup
 
@@ -175,9 +215,49 @@ class cgroup:
                     lsplit = line.split()
                     if len(lsplit) == 2:
                         self.meminfo[lsplit[0]] = int(lsplit[1])
+                self.mem_used_bytes = ( 
+                    float(rawMem[1].split()[1]) + \
+                    float(rawMem[5].split()[1])
+                )
+                self.cached_mem_bytes = float(rawMem[0].split()[1])
+                
         except (IOError, OSError) as e:
-            logger.error("Unable to gather memory information from cgroup %s" % self.ident)
+            logger.error("Unable to gather memory information from cgroup %s, %s" % (self.ident, e))
+          
+        if self.mem_used_bytes > ( configData.cgroup_memoryLimit_bytes * .80 ):
+           
+            now = datetime.datetime.now()
+            if (now - self.last_mem_nag).seconds > ( configData.nag_ratelimit ):
+               
+                buff = configData.mem_nag_msg % "{0:.2f}".format((self.mem_used_bytes / (1024**2)))
+   
+                self.last_mem_nag = now
+                
+                notification.notifier(self.UIDS[0], self.unames[self.UIDS[0]], buff)
         return 0
+
+    ## func log_throttle()
+    ## Dumps a json encoded string to a logfile so we can monitor throttle events externally
+    ## with a simple text scraper.
+    def log_throttle(self):
+        try:
+        
+            out_dict = {}
+            out_dict['TYPE'] = 'throttleCPU'
+            out_dict['ID'] =  self.cur_throttle_id
+            out_dict['CGROUP'] = self.ident
+            out_dict['USERNAME'] = self.unames[self.UIDS[0]]
+        
+            out_dict['START_TIME'] = self.cur_throttle_start.strftime('%Y-%m-%d %H:%M:%S')
+            out_dict['END_TIME'] = self.cur_throttle_end.strftime('%Y-%m-%d %H:%M:%S')
+            out_dict['CPU'] = self.cur_throttle_avg_cpu * 100
+            out_dict['NODE'] = configData.hostname
+        except Exception as e:
+            logger.info("Error setting output stream for throttle event on %s: %s" % (self.ident, e))
+
+        with open( configData.throttle_log, 'a') as throt:
+            print >>throt, json.dumps(out_dict)
+
     ## func getCPUPercent()
     ## Get cgroup's cpu usage datas, delta against system totals since last grab.
     def getCPUPercent(self, system_totals):
@@ -185,74 +265,123 @@ class cgroup:
         cg_change = newtime - self.cpu_time
 
         self.cpu_pct = cg_change / system_totals[3]
+        logger.info("%s: %s" % (self.ident, str(self.tasks)) )
+        logger.info(str(self.cpu_pct))
         if self.cpu_pct >= configData.activityThreshold:
             self.isActive = True
         else:
             self.isActive = False
        
-        if self.cpu_pct * (cores * cpu_period) >= (configData.upper_ThrottleThresh * self.cpu_quota) and not self.throttled:
-            self.throttled = True
-        elif self.cpu_pct * (cores * cpu_period) <= (configData.lower_ThrottleThresh * self.cpu_quota) and self.throttled:
-            self.throttled = False
+        if self.cpu_pct * (cores * cpu_period) >= (configData.upper_ThrottleThresh * self.cpu_quota):
+            self.throttle_grace = 0
+            if not self.throttled:
+                self.throttled = True
+                self.cur_throttle_start = datetime.datetime.now()
+                self.cur_throttle_length_secs = 0
+                self.cur_throttle_cpu_total = self.cpu_pct
+                self.cur_throttle_turns = 1
+                self.cur_throttle_id = gen_EventID()
+            elif self.throttled:
+                self.cur_throttle_length_secs += configData.interval
+                self.cur_throttle_cpu_total += self.cpu_pct
+                self.cur_throttle_turns += 1
 
+        elif self.cpu_pct * (cores * cpu_period) <= (configData.lower_ThrottleThresh * self.cpu_quota) and self.throttled:
+            if self.throttle_grace == 0:
+                self.cur_throttle_end = datetime.datetime.now()
+                self.throttle_grace +=1
+            elif self.throttle_grace < 3:
+                self.throttle_grace += 1
+            else:
+                self.throttled = False
+                self.cur_throttle_avg_cpu = self.cur_throttle_cpu_total / float(self.cur_throttle_turns)
+                self.log_throttle()
+
+    #    self.check_mem()
         self.cpu_time = newtime
+
+
     ## func setlimits()
     ## sets limits for this cgroup. CPU limit is MANDATORY
     ## memory limit, CPU shares are defaulted to system defaults (but can take an optional value)
-    def setlimits(self,cpuLim, memLim=configData.cgroup_memoryLimit_bytes, shares=1024):
-        
-        ## take '0' as a defaulter. 
-        if cpuLim == 0:
-            cpuLim = configData.cpu_pct_max * (cores * cpu_period)
-        if memLim == 0:
-            memLim = memLim = configData.cgroup_memoryLimit_bytes
-        
-        if initStyle == "sysv":
-            with open("%s/cpu.shares" % self.cpu_cgroup_path, 'w') as f:
-                f.write(str(shares))
-            with open("%s/cpu.cfs_quota_us" % self.cpu_cgroup_path, 'w') as f:
-                f.write(str(cpuLim))
-            with open('%s/memory.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
-                f.write(str(memLim))
-            if self.noswap:
-                with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
-                    f.write(str(memLim))
-        else:
-            if self.isUser:
-                shares = UInt64(shares)
-                cpuLim = UInt64(cpuLim)
-                memLim = UInt64(memLim)
-                
-                ## Use systemd to set limits directly on this bad boy 
+    ##
+    ## CPU limit should be set IMMEDIATELY, but memory limit may be delayed if it is set lower
+    ## than the user's current memory usage. The value should be stored in the cgroup data structure,
+    ## and will be applied once the user's memory allocation has dropped below the limit.
+
+    def setlimits(self,cpuLim, memLim=None, shares=None):
+    
+        if len(self.tasks) > 0:
+            memLim = memLim or self.mem_limit ## Take memlimit, or use value from stored var
+            shares = shares or 1024
+            
+            
+            ## take '0' as a defaulter. 
+            if cpuLim == 0:
+                cpuLim = configData.cpu_pct_max * (cores * cpu_period)
+            if memLim == 0:
+                memLim = memLim = configData.cgroup_memoryLimit_bytes
+            if initStyle == "sysv" or configData.forceLegacy == True:
                 try:
-                    systemd_interface.SetUnitProperties(self.ident, 'true', [("CPUShares", shares), ("CPUQuotaPerSecUSec", cpuLim), ("MemoryLimit", memLim)])
-                except Exception as e:
-                    logger.error("Unable to set defined cgroup limits for: %s" % self.ident)
+                    with open("%s/cpu.shares" % self.cpu_cgroup_path, 'w') as f:
+                        f.write(str(shares))
+                except (IOError, OSError) as e:
+                    logger.error('Unable to write cpu share limit for cgroup %s' % self.ident)
+                try:
+                    with open("%s/cpu.cfs_quota_us" % self.cpu_cgroup_path, 'w') as f:
+                        f.write('{0:.0f}'.format(cpuLim)) # format to remove decimal.
+                except (IOError, OSError) as e:
+                    logger.error('Unable to write cpu limit for cgroup %s' % self.ident)
+                try:
+                    with open('%s/memory.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                        f.write(str(memLim))
+                except (IOError, OSError) as e:
+                    logger.error('Unable to write memory limit for cgroup %s' % self.ident)
                 if self.noswap:
                     try:
-                        # with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
-                        #     f.write(str(memLim))
-                        with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
-                            f.write(str(0))
-                    except (OSError, IOError) as e:
-                        logger.debug("Unable to set swappiness for cgroup! %s" % self.ident)
-                        pass # THIS SEEMS TO FAIL A LOT WITH PERM ERRORS. SYSD LOCKING DOWN CG FILES?
-                    except:
-                        pass
+                        with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                            f.write(str(memLim))
+                    except (IOError, OSError) as e:
+                        logger.error('Unable to write memory+swap limit for cgroup %s' % self.ident)
+                    with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
+                        f.write('0')
+            else: 
+                if self.isUser:
+                    shares = UInt64(shares)
+                    cpuLim = UInt64(cpuLim)
+                    memLim = UInt64(memLim)
+                    
+                    ## Use systemd to set limits directly on this bad boy 
+                    try:
+                        systemd_interface.SetUnitProperties(self.ident, 'true', [("CPUShares", shares), ("CPUQuotaPerSecUSec", cpuLim), ("MemoryLimit", memLim)])
+                    except Exception as e:
+                        logger.error("Unable to set defined cgroup limits for: %s. Error: %s" % (self.ident, e))
+                    if self.noswap:
+                        try:
+                            # with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                            #     f.write(str(memLim))
+                            with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
+                                f.write(str(0))
+                        except (OSError, IOError) as e:
+                            logger.debug("Unable to set swappiness for cgroup! %s. More information: %s" % (self.ident, e))
+                            ## For whatever reason, trying to write directly to either this file or memory.memsw.limit_in_bytes likes to fail
+                            ## ... randomly. Have not been able to find a pattern in it - sometimes it works, sometimes it doesn't.
+                        except:
+                            pass 
 
-            else:
-                pass
-                ## TODO: implement non-user cgroup limit-setting   
+                else:
+                    pass
+                    ## TODO: implement non-user cgroup limit-setting   
                     
     ## func penaltyBox()
     ## Function to just drop limits to preset values for a penaltybox
     def penaltybox(self, timeout=configData.penaltyTimeout):
         self.penaltyboxed = True
-        self.penaltybox_end = datetime.now() + timedelta(seconds=timeout)
+        self.penaltybox_end = datetime.datetime.now() + datetime.timedelta(seconds=timeout)
     ## companion function to drop the pb
     def unpenaltybox(self):
         self.penaltyboxed = False # remove pb flag
-        self.penaltybox_end = datetime.now()
+        self.penaltybox_end = datetime.datetime.now()
         self.setlimits( cpu_period * cores) # set to default limits
     
     ## func dumpinfo()
@@ -272,3 +401,5 @@ class cgroup:
         output['cached'] = self.meminfo['total_cache']
         output['isuser'] = self.isUser
         return json.dumps(output)
+
+    

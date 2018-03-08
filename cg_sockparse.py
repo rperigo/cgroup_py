@@ -55,7 +55,7 @@ class cg_argparse:
 
         self.global_opts = {
                                 "--memlimit":("^[1-9]{1}[0-9]*[mkgMKG]{0,1}$", "Takes a plain digit for bytes, or can be followed with k/m/g for units."),
-                                "--cpulimit":("^[1-9]{1}[0-9]{0,1}[.]{0,1}[0-9]{0,2}$", "Takes either an integer or 2-decimal float value. Percentage of all CPU cores."),
+                                "--cpulimit":("^[1-9]{1}[0-9]{0,1}[\.]{0,1}[0-9]{0,2}$", "Takes either an integer or 2-decimal float value. Percentage of all CPU cores."),
                                 "--interval":("^[1-9]{1}[0-9]{0,2}", "Takes an integer (seconds)"),
                                 "--activitythreshold":("^[1-9]{1}[0-9]{,2}[.]{0,1}[0-9]{0,2}$", "Takes a float value (up to 2 decimal places). Percentage of all CPU cores."),
                                 "--memnag":("^o[n,ff]{1}", "Takes on/off."),
@@ -63,14 +63,13 @@ class cg_argparse:
                         }
 
         self.list_opts = {
-                        "--cgroups":("", "Lists all currently available cgroups."),
+                        "--cgroup":("", "Gets information for a given cgroup (or all cgroups with all, or a comma-separated list of cgroups, or just names)"),
                         "--config":("", "Dumps current configuration."),
                         "--tasks": ("", "Dumps tasks, sorted by cgroup ID")
 
                      }   
         
-
-
+        
 
     ## Do some input validation. But not necessarily perform any actions.
     ## Return tuple of (bool(), str())
@@ -170,9 +169,20 @@ class cg_argparse:
                 return (False, "Bad option for list! Did you forget a '--'?")
             else:
                 retmsg = ""
-                if 'cgroups' in args[1]:
-                    for c in globalData.arr_cgroups.keys():
-                        retmsg += "%s\n" % globalData.arr_cgroups[c].dumpinfo()
+                if 'cgroup' in args[1]:
+                    if 'all' in args[2]:
+                        for c in globalData.arr_cgroups.keys():
+                            retmsg += "%s\n" % globalData.arr_cgroups[c].dumpinfo()
+                    
+                    elif 'names' in args[2]:
+                        for c in globalData.names.keys():
+                            retmsg += "%s       " % c
+                    else:
+                        tmp_cgs = args[2].split(',')
+                        for c in tmp_cgs:
+                            if c in globalData.names.keys():
+                                retmsg += "%s\n" % globalData.arr_cgroups[globalData.names[c]].dumpinfo()
+
                 elif 'config' in args[1]:
                     retmsg = globalData.configData.dumpconfig()
                 return (True, retmsg)
@@ -187,7 +197,7 @@ class cg_argparse:
         if not cgroup == "":
             if "memlimit" in op:
                 iVal = memory_unitizer(val)
-                
+                logger.info("Trying to set memory limit to: %d" % iVal)
                 try:
                     globalData.arr_cgroups[cgroup].mem_limit = iVal
                 except KeyError:

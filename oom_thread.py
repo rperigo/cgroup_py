@@ -87,6 +87,7 @@ class oom_thread(threading.Thread):
                                     logger.error(finderMsg)
                             
                         except Exception as e:
+                            logger.error(e)
                             logsBroken.append(msglog) # send if we can't open the logs, just in case.
                             
                     

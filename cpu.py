@@ -1,5 +1,6 @@
 
 import cgConfig, os
+from log import logger
 
 
 # Function to get total *ACTIVE* system CPU time out of /proc/stat
@@ -59,7 +60,7 @@ def get_user_CPUTotals(tasklist):
                 logger.warning('Unable to get status of PID %s for user %s', process, subDir)
                 continue
 
-            getTGroup = status[2].split(':')
+            getTGroup = status[cgConfig.tgid_statusline].split(':')
             tGroup = getTGroup[1].strip()
             if tGroup == process:
                 try:
@@ -72,7 +73,8 @@ def get_user_CPUTotals(tasklist):
                     userTime += sum(numlist)
                 except IOError:
                     logger.warning('Unable to get status of PID %s for user %s', process, subDir)
-
+        else:
+            logger.warning("PID disappeared: %s" % process)
     return userTime
 
 

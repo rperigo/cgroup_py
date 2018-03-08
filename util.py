@@ -2,6 +2,8 @@ import re
 import os, subprocess, logging, cgConfig
 from string import letters, digits
 from multiprocessing import cpu_count
+from string import letters, digits
+from random import randrange
 
 cores = cpu_count()
 # from globalData import arr_active_pids, arr_cgroups, cgprefix
@@ -344,3 +346,10 @@ def guessUnit_ReturnBytes(rawstr):
     
     return bites
 
+def gen_EventID(length=16):
+    outstr = ""
+    legits = letters + digits
+    for i in range (0, length):
+        outstr += legits[randrange(0, len(legits))]
+    
+    return outstr

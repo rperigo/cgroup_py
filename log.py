@@ -2,7 +2,7 @@ import logging
 from logging import handlers as hdl
 #from globalData import logfile
 logfile = "/var/log/cgroup_py.log"
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("cgPyLogger")
 logger.propagate = False
 fh = hdl.WatchedFileHandler(logfile, 'a')

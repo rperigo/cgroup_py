@@ -1,22 +1,41 @@
 from log import logger
 from textwrap import dedent
 import smtplib
+import globalData
+import socket
+from email.mime.text import MIMEText
+import datetime
+import json
 
-def oomailer(cg_ident, oom_message, sending_email, user_email_domain, admin_email):
+def gen_EventID(length=16):
+    from string import letters
+    from string import digits
+    from random import randrange
+    outstr = ""
+    legits = letters + digits
+    for i in range (0, length):
+        outstr += legits[randrange(0, len(legits))]
+    
+    return outstr
+
+def oomailer(cg_ident):
     logger.info("Stub: Notification of OOM for cgroup %s" % cg_ident)
+    uid = globalData.arr_cgroups[globalData.names[cg_ident]].UIDS[0]
+    uname = globalData.arr_cgroups[globalData.names[cg_ident]].unames[uid]
+    uid = str(uid)
     hname = socket.gethostname()
-    message = MIMEText(oom_message)
-    fAddress = sending_email
-    toAddress = "%s@%s" % (uname, user_email_domain) ## TODO: encode user emails in cgroup structure, to allow for variance in domain
-    toAdmin = admin_email
+    message = MIMEText(globalData.configData.oom_message)
+    fAddress = globalData.configData.sending_email
+    toAddress = "%s@%s" % (uname, globalData.configData.user_email_domain) ## TODO: encode user emails in cgroup structure, to allow for variance in domain
+    toAdmin = globalData.configData.admin_email
     adminText = dedent("""
-            A user with name %s, UID %s on karst desktop node %s has just gone OOM. 
-            """ % (uname, uid, hname)) ## TODO: Make this nicer, maybe pull from a text file.
+            A user with name %s, UID %s on %s node %s has just gone OOM. 
+            """ % (uname, uid, globalData.configData.system_name, hname)) ## TODO: Make this nicer, maybe pull from a text file.
     adminMsg = MIMEText(adminText)
     adminMsg['Subject'] = "KD Beta - user %s OOM notification" % uname
     adminMsg['To'] = toAdmin
     adminMsg['From'] = fAddress
-    message['Subject'] = "Out Of Memory Notification for %s, Karst Desktop BETA node %s" % (uname, hname)
+    message['Subject'] = "Out Of Memory Notification for %s, %s node %s" % (uname, globalData.configData.system_name, hname)
     message['From'] = fAddress
     message['To'] = toAddress
 
@@ -33,4 +52,4 @@ def oomailer(cg_ident, oom_message, sending_email, user_email_domain, admin_emai
         with open('/tmp/cgroup_py/throttle.log', 'a') as tLog:
             print >>tLog, outputJSON
     except Exception as e:
-        print e
+        logger.error(e)

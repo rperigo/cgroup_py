@@ -17,7 +17,7 @@ from log import logger ## Logging to logs with our logger.
 #from mail import oomailer
 import datetime ## needed to search timestamp in kernlog
 import threading
-
+import re # Make with the regex!
 
 def sys_memtotal(): # returns total RAM in bytes
     memdata = ['NULL']
@@ -56,30 +56,19 @@ def user_memInfo(cgPath, initmode):
         out[key] = int(val)
     return out
 
-def mem_notificationCheck(mLimit, userObject):
-    now = time.time()
-    out = False
-    meminfo = userObject.meminfo
-    usage = meminfo['rss'] + meminfo['swap']
-    
-    # Fixme get global refresh period from elsewhere
-    if userObject.mem_last_refresh == 0:
-        out = True
-    if now - userObject.mem_last_refresh >= globalMemRefresh:
-        out = True
-    
-    return out
 
-def mem_notifier(userObject, memlimit, lowThresh, hiThresh):
-    if globalData.configData.enabled_Thinlinc:
-        notifyCmd = ['tl-notify']
+
+#def mem_notifier(userObject, memlimit, lowThresh, hiThresh):
+#    if globalData.configData.enabled_Thinlinc:
+#        notifyCmd = ['tl-notify']
+
 
 
 ## Parse string representing memory size, return int in bytes
 def memory_unitizer(val):
     
     oval = 0
-    if not re.match(val, '[0-9]*[kKmMgG]{0,1}$'):
+    if not re.match('[0-9]*[kKmMgG]{0,1}$', val):
         raise ValueError("String %s does not match 12345k/m/g pattern!" % val)
     ## Convert value based on unit
     if any(u in val for u in ("k", "K")):
