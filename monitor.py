@@ -43,7 +43,7 @@ def runCheck(initType, scrn):
     if initType == "systemd":
         try:
             getStatus = subprocess.Popen(['systemctl', 'status', 'cgroup_py'], stdout=subprocess.PIPE)
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError, IOError as e:
             eMsg = "Unable to get status of cgroup_py daemon. Exiting!"
             scrn.addstr(1,1,eMsg)
             time.sleep(2)
@@ -64,7 +64,7 @@ def runCheck(initType, scrn):
     elif initType == "sysV":
         try:
             getStatus = subprocess.Popen(['/etc/init.d/cgroup_py', 'status'], stdout=subprocess.PIPE)
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError, IOError as e:
             eMsg = "Unable to get status of cgroup_py daemon. Exiting!"
             scrn.addstr(1,1, eMsg)
             time.sleep(2)
@@ -89,7 +89,12 @@ def derPaginator(buff_array, boxWide, boxHite):
 # simple function to call getent on passwd and return readable username from a UID
 def get_user_name(cgroup):
     uid = cgroup.translate(None, "%s-./" %string.letters).rstrip()
-    getent = subprocess.Popen(['getent', 'passwd', uid], stdout=subprocess.PIPE).communicate()[0]
+    try:
+        getent = subprocess.Popen(['getent', 'passwd', uid], stdout=subprocess.PIPE).communicate()[0]
+    except subprocess.CalledProcessError, IOError as e:
+        logger.error("Couldn't determin username for cgroup %s, %s" %(cgroup, e))
+        return "unknown"
+
     out = getent.split(':')[0]
     
     return out
@@ -437,7 +442,7 @@ def main(scr):
         subprocess.check_call(['systemctl', '--version'])
         initStyle = 'systemd'
         
-    except (subprocess.CalledProcessError) as e:
+    except (subprocess.CalledProcessError, IOError) as e:
         msg ="Systemctl found, but error occurred: %s. Exiting!" % e
        
         logger.error(msg)

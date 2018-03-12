@@ -6,7 +6,7 @@
 
 import memory, cpu
 from string import letters, digits
-import subprocess
+# import subprocess
 import json
 from collections import OrderedDict
 from os import listdir as ls
@@ -74,7 +74,7 @@ class cgroup:
         elif isinstance(uid, str) or isinstance(uid, int):
             self.UIDS = [ int(uid) ]
         if self.UIDS:
-            print("Determining Uname")
+          #  print("Determining Uname")
             for i in self.UIDS:
                 self.unames[i] = getpwuid(i)[0]
         ## TODO: Fully implement this.
@@ -184,10 +184,14 @@ class cgroup:
             except:
                 logger.error("Couldn't open taskfile: %s/tasks" % p)
         try: # TODO: split into separate try/except - or just loop throuh self.paths?
-            cpu_tf = open("%s/tasks" % self.cpu_cgroup_path, 'a')
-            cpuset_tf = open("%s/tasks" % self.cpuset_cgroup_path, 'a')
-            cpuacct_tf = open("%s/tasks" % self.cpuacct_cgroup_path, 'a')
-            mem_tf = open("%s/tasks" % self.mem_cgroup_path, 'a')
+            # cpu_tf = open("%s/tasks" % self.cpu_cgroup_path, 'a')
+            # cpuset_tf = open("%s/tasks" % self.cpuset_cgroup_path, 'a')
+            # cpuacct_tf = open("%s/tasks" % self.cpuacct_cgroup_path, 'a')
+            # mem_tf = open("%s/tasks" % self.mem_cgroup_path, 'a')
+            cpu_tf = "%s/tasks" % self.cpu_cgroup_path
+            cpuset_tf = "%s/tasks" % self.cpuset_cgroup_path
+            cpuacct_tf = "%s/tasks" % self.cpuacct_cgroup_path
+            mem_tf = "%s/tasks" % self.mem_cgroup_path
         
         except (IOError, OSError) as e:
             return 2
@@ -200,26 +204,38 @@ class cgroup:
                 for f in tfs:
                     if not f in written:
                         try:
-                            print >>f, pid
+                           
+                            logger.info("Attempting to add %s to %s" % (pid, f))
+                            # print >>f, pid
+                             # WHAT THE HECK?! THIS IO ERROR IS BEING IGNORED IF THE PID DISAPPEARS!?
+                             ## OK, so this only fails if we open the file and KEEP IT OPEN while adding tasks
+                             ## Going back to a with open() for these :(
+                            with open(f, 'a') as tf:
+                            #f.write("%s\n" % pid)
+                                tf.write("%s\n" % pid)
                             written.append(f)
-                        except:
-                            logger.debug("Unable to append task to cgroup %s" % self.ident)
-        for f in tfs:
-            f.close()
+                        except Exception as exc:
+                         #   f.close()
+                            logger.error("Unable to append task to cgroup %s, %s" % (self.ident, exc))
+        # for f in tfs:
+        #     try:
+        #         f.close()
+        #     except:
+        #         logger.error("Unable to close FD for %s: %s" %(f, e))
 
         # Grab raw memory info from memory.stat, pipe to dict
         try:
-            with open("%s/memory.stat" % self.mem_cgroup_path) as memfd:
+            with open("%s/memory.stat" % self.mem_cgroup_path, 'r') as memfd:
                 rawMem = memfd.read().splitlines()
-                for line in rawMem:
-                    lsplit = line.split()
-                    if len(lsplit) == 2:
-                        self.meminfo[lsplit[0]] = int(lsplit[1])
-                self.mem_used_bytes = ( 
-                    float(rawMem[1].split()[1]) + \
-                    float(rawMem[5].split()[1])
-                )
-                self.cached_mem_bytes = float(rawMem[0].split()[1])
+            for line in rawMem:
+                lsplit = line.split()
+                if len(lsplit) == 2:
+                    self.meminfo[lsplit[0]] = int(lsplit[1])
+            self.mem_used_bytes = ( 
+                float(rawMem[1].split()[1]) + \
+                float(rawMem[5].split()[1])
+            )
+            self.cached_mem_bytes = float(rawMem[0].split()[1])
                 
         except (IOError, OSError) as e:
             logger.error("Unable to gather memory information from cgroup %s, %s" % (self.ident, e))
@@ -254,20 +270,36 @@ class cgroup:
             out_dict['NODE'] = configData.hostname
         except Exception as e:
             logger.info("Error setting output stream for throttle event on %s: %s" % (self.ident, e))
+        try:
+            with open( configData.throttle_log, 'a') as throt:
+                print >>throt, json.dumps(out_dict)
+        except (IOError, OSError) as e:
+            logger.error("Failed to write throttle data to log! %s" % e)
 
-        with open( configData.throttle_log, 'a') as throt:
-            print >>throt, json.dumps(out_dict)
 
     ## func getCPUPercent()
     ## Get cgroup's cpu usage datas, delta against system totals since last grab.
-    def getCPUPercent(self, system_totals):
+    def getCPUPercent(self, system_totals, totalusers):
         newtime = cpu.get_user_CPUTotals(self.tasks)
         cg_change = newtime - self.cpu_time
-
+        
+        # Dirty hack. TODO: Make this cleaner, more granularly set the theoretcal
+        # use threshold based on number of users and current system load rather 
+        # than just number of users.
+        if totalusers < 3:   
+            divisor = 1
+        else:
+            divisor = totalusers / 3
+        theoretical_limit = configData.activityThreshold / divisor
         self.cpu_pct = cg_change / system_totals[3]
-        logger.info("%s: %s" % (self.ident, str(self.tasks)) )
-        logger.info(str(self.cpu_pct))
-        if self.cpu_pct >= configData.activityThreshold:
+
+        logger.info("DEBUG: %s has CPU percent of: %f" % (self.ident, self.cpu_pct))
+      
+        ## Changing this because a large number of active users would break logic (
+        ## nobody would be using more than the activity threshold and our upper limit
+        ## would get broken )
+        #if self.cpu_pct >= configData.activityThreshold:
+        if self.cpu_pct >= theoretical_limit:
             self.isActive = True
         else:
             self.isActive = False
@@ -297,8 +329,11 @@ class cgroup:
                 self.cur_throttle_avg_cpu = self.cur_throttle_cpu_total / float(self.cur_throttle_turns)
                 self.log_throttle()
 
+        if newtime < 0:
+            self.cpu_time = 0
     #    self.check_mem()
-        self.cpu_time = newtime
+        else:
+            self.cpu_time = newtime
 
 
     ## func setlimits()
@@ -341,10 +376,11 @@ class cgroup:
                     try:
                         with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
                             f.write(str(memLim))
+                        with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
+                            f.write('0')
                     except (IOError, OSError) as e:
                         logger.error('Unable to write memory+swap limit for cgroup %s' % self.ident)
-                    with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
-                        f.write('0')
+                    
             else: 
                 if self.isUser:
                     shares = UInt64(shares)

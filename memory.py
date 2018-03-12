@@ -5,7 +5,7 @@
 ## and also the threading.Thread subclass to monitor a cgroup's OOM state
 ## in a separate thread and associated notifiers.
 
-import subprocess
+# import subprocess
 import string
 import user
 import time

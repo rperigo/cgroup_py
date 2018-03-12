@@ -299,7 +299,7 @@ class config_holder(object):
         try:
             subprocess.check_call(['which', 'tl-notify'])
             self.notificationMethod = 'TL'
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, IOError) as e:
             self.notificationMethod = 'CLI'
             logger.error('Unable to verify presence of ThinLinc installation. Defaulting to CLI notifier.')
 
@@ -423,13 +423,16 @@ def findCGRoot():
 def get_tgid_statusline():
     try:
         pfolders = [p for p in os.listdir('/proc/') if p.isdigit()]
+        pfolders.sort()
         apid = pfolders[-1]
-        with open('proc/%s/status' % apid) as pf:
+        logger.info("USING PID %s to check TGID locale" % apid)
+        with open('/proc/%s/status' % apid) as pf:
             lines = pf.read().splitlines()
             for l in range(0, len(lines)):
                 if "Tgid" in lines[l][:4]:
+                    logger.info("Procstatus Line containing TGID: %d" % l)
                     return l
-                    break
+                    # break
             else:
                 logger.error("Unable to determine /proc/PID/status format! Exiting!")
                 sys.exit(2)

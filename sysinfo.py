@@ -7,7 +7,7 @@ def get_Numa_Nodes():
     try:
         sub_LSCPU = subprocess.Popen(['lscpu'], stdout=subprocess.PIPE)
         cpu_info = sub_LSCPU.communicate()[0].splitlines()
-    except (subprocess.CalledProcessError, OSError, ValueError) as e:
+    except (subprocess.CalledProcessError, IOError, OSError, ValueError) as e:
         return 0 # return 0 in case of error
     
     for line in cpu_info:

@@ -54,7 +54,7 @@ def findInitStyle():
    #     logger.info('Systemctl found / runnable. Using systemd-style cgroup subsystems')
         return initStyle
         
-    except (subprocess.CalledProcessError) as e:
+    except (subprocess.CalledProcessError, IOError) as e:
         msg ="Systemctl found, but error occurred: %s. Exiting!" % e
         print >> sys.stderr, msg
     #    logger.error(msg)
@@ -76,7 +76,7 @@ def getNotificationMethod():
     try: 
         subprocess.check_call(['which', 'tl-notify'])
         return "TL"
-    except (OSError, subprocess.CalledProcessError) as e:
+    except (OSError, subprocess.CalledProcessError, IOError) as e:
         return "CLI"
 
 #### Stuff from Old codebase below this line ####
@@ -115,8 +115,11 @@ class throttleEvent:
         somethingSomethingJson = OrderedDict()
         somethingSomethingJson = json.dumps({'TYPE':'throttleCPU', 'ID': self.id, 'CGROUP': self.cGroup, 'USERNAME': self.username, 
                                                 'START_TIME': self.started, 'END_TIME': self.ended, 'CPU': self.cpuPct, 'NODE':gethostname()})
-        with open(fpath, 'a') as ourFile:
-           print >> ourFile, somethingSomethingJson
+        try:
+            with open(fpath, 'a') as ourFile:
+                print >> ourFile, somethingSomethingJson
+        except Exception as e:
+            logger.error("Unable to write throttle event %s" % e)
 
 def rotateThrottleLog(f, lastRotate):
     n = datetime.datetime.now().date()
@@ -177,7 +180,7 @@ def getMailerDaemons():
                 out[each.split()[-1]] = each.split()[1]
         print out
         return out
-    except (subprocess.CalledProcessError, OSError):
+    except (subprocess.CalledProcessError, IOError, OSError):
         logger.warning('Something went wrong trying to get OOM Mailer daemon list.')
         out = dict()
         return out
@@ -231,7 +234,11 @@ def getMemNodes():
 def cliMsg(uName, msgBuffer):
 
     tty=''
-    w = subprocess.Popen(['w'], stdout=subprocess.PIPE).communicate()[0].splitlines()
+    try:
+        w = subprocess.Popen(['w'], stdout=subprocess.PIPE).communicate()[0].splitlines()
+    except:
+        logger.error("Unable to get w opened!")
+        return 2
 
     for each in w:
         ent = each.split()
@@ -242,9 +249,13 @@ def cliMsg(uName, msgBuffer):
                 break
     else:
         return 2
-    
-    a = subprocess.Popen(['echo', msgBuffer], stdout=subprocess.PIPE)
-    subprocess.check_call(['write', uName, tty], stdin=a.stdout)
+    try:
+
+        a = subprocess.Popen(['echo', msgBuffer], stdout=subprocess.PIPE)
+        subprocess.check_call(['write', uName, tty], stdin=a.stdout)
+    except Exception as e:
+        logger.error("UNable to write CLI message! %s" % e)
+        return 2
     return 0
 
 
@@ -256,8 +267,12 @@ def cliMsg(uName, msgBuffer):
 def memoryNotify(usedMem, memLimit, uid):
 
     #get hu-man readable username from numeric UID
-    getUname = subprocess.Popen(['getent', 'passwd', uid], stdout=subprocess.PIPE)
-    userName = getUname.communicate()[0].split(':')[0]
+    try:
+        getUname = subprocess.Popen(['getent', 'passwd', uid], stdout=subprocess.PIPE)
+
+        userName = getUname.communicate()[0].split(':')[0]
+    except Exception as e:
+        logger.error("Unable to get uname to nag memory issue. %s" % e)
 
       # Format used memory to something a hu-man could read
     hr = '{0:.3f}'.format(usedMem / 1024**3)
@@ -276,7 +291,7 @@ def memoryNotify(usedMem, memLimit, uid):
 
         try:
             subprocess.check_call(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.CalledProcessError, IOError, OSError):
             logger.warning("Unable to notify user %s of memory issue. Possibly a CLI login. Using 'wall' instead." % userName)
             cliMsg(userName, writeBuf)
             #subprocess.Popen(['wall', '-n', '%s: %s' % (userName, writeBuf)])
@@ -290,7 +305,7 @@ def memoryNotify(usedMem, memLimit, uid):
                             " of "+hrT+"GB used. If limit is reached, processes will die."
         try:
             subprocess.check_call(["/opt/thinlinc/sbin/tl-notify","-u", userName, writeBuf], stdout=subprocess.PIPE)
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.CalledProcessError, IOError, OSError):
             logger.warning("Unable to notify user %s of memory issue. Possibly a CLI login. Using 'wall' instead." % userName)
             cliMsg(userName, writeBuf)
             #subprocess.Popen(['wall', '-n', '%s: %s' % (userName, writeBuf)])

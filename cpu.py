@@ -7,9 +7,12 @@ from log import logger
 ####################################################################################################
 
 def getCPUTotal(oldValues):
-    with open('/proc/stat') as s:
-        procstat = s.read().splitlines()
-
+    try:
+        with open('/proc/stat') as s:
+            procstat = s.read().splitlines()
+    except Exception as e:
+        logger.error("Problem with /proc/stat! %s" % e)
+        return oldValues
     cpu = procstat[0].split(' ')
     tempint = []
     for field in cpu[2:10]:
@@ -42,7 +45,7 @@ def get_user_CPUTotals(tasklist):
     
     for process in tasklist:
         procFolder = '/proc/' + process
-        
+        outlist = list()
 
         # Get process CPU usage, add to user's memHogs:
         ###########################################
@@ -54,29 +57,47 @@ def get_user_CPUTotals(tasklist):
             # that folder can still be seen and read from, causing
             # hyper-inflated usage values for users running threaded apps.
             try:		
-                with open(procFolder + '/status') as f:
-                    status = f.read().splitlines()
+                f = open(procFolder + '/status')
+                status = f.read().splitlines()
+                f.close()
             except IOError:
                 logger.warning('Unable to get status of PID %s for user %s', process, subDir)
                 continue
 
-            getTGroup = status[cgConfig.tgid_statusline].split(':')
-            tGroup = getTGroup[1].strip()
+            # getTGroup = status[cgConfig.tgid_statusline].split(':')
+            #getTGroup = status[3].split(':')
+            tGroup = process
+            for l in status:
+
+                if "Tgid" in l:
+                    tGroup = l.split(':')[1].strip()
+                    break
+            else:
+
+                logger.error("process can't be added %s" % process)
+                continue
+            #tGroup = getTGroup[1].strip()
+     #       logger.info("TGID: %s     PID: %s" % (tGroup, process))
             if tGroup == process:
                 try:
-                    with open(procFolder + '/stat') as sf:
-                        procStat = sf.read().split(' ')	
+                    sf = open(procFolder + '/stat')
+                    procStat = sf.read().split(' ')	
                     #convert relevant fields for CPU time to float
                     numlist = []
                     for i in procStat[13:17]:
                         numlist.append(float(i))
                     userTime += sum(numlist)
+                    sf.close()
+                    outlist.append(process)
                 except IOError:
                     logger.warning('Unable to get status of PID %s for user %s', process, subDir)
+            else:
+                logger.info("DEBUG: IGNORING PID %s" % process)
+                outlist.append(process)
         else:
             logger.warning("PID disappeared: %s" % process)
+            continue
     return userTime
-
 
 
 # Function to apply CPU limit for a given cgroup
@@ -88,20 +109,33 @@ def enforceLimitForCgroup(cgroup, cpuLimit):
     # since systemd handles cgroups differently.
     if initMode == "sysd":
         s_cpuLimit = "{0:.2f}".format(cpuLimit)
-        subprocess.check_call(['systemctl', 'set-property', '--runtime', cgroup, 'CPUQuota=%s%%' % s_cpuLimit])
+        try:
+            subprocess.check_call(['systemctl', 'set-property', '--runtime', cgroup, 'CPUQuota=%s%%' % s_cpuLimit])
+        except (subprocess.CalledProcessError, IOError) as e:
+            logger.error(e)
+
 
     else:
         s_cpuLimit = str(int(cpuLimit))
         #fixme: set proper variable for cpu cgroup root. perhaps in cgconfig and an import
-        with open(cgConfig.dict_cgroups[cgroup].cpu_cgroup_path + "/" + cpu.cfs_quota_us, "w") as quotafile:
-            quotafile.write(s_cpuLimit)
+        try:
+            with open(cgConfig.dict_cgroups[cgroup].cpu_cgroup_path + "/" + cpu.cfs_quota_us, "w") as quotafile:
+                quotafile.write(s_cpuLimit)
 
+        except Exception as e:
+            logger.error("Error writing quota for %s: %s" % (cgroup, e))
 def setCPUSharesForCgroup(cgroup, shares, initMode):
     if initMode == "sysd":
-        subprocess.check_call(['systemctl', 'set-property', '--runtime', cgroup, 'CPUShares=%d' % shares])
+        try:
+            subprocess.check_call(['systemctl', 'set-property', '--runtime', cgroup, 'CPUShares=%d' % shares])
+        except (subprocess.CalledProcessError, IOError) as e:
+            logger.error(e)
     else:
-        with open(cgConfig.dict_cgroups[cgroup].cpu_cgroup_path + "/" + cpu.shares, "w") as sharesF:
-            sharesF.write(str(shares))
+        try:
+            with open(cgConfig.dict_cgroups[cgroup].cpu_cgroup_path + "/" + cpu.shares, "w") as sharesF:
+                sharesF.write(str(shares))
+        except (IOError, OSError) as e:
+            logger.error(e)
 
 
 

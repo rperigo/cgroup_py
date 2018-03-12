@@ -9,7 +9,7 @@
 ## the process exits.
 ##
 #####################################################################################################
-
+#import pdb
 import os
 import util
 import getopt
@@ -31,7 +31,7 @@ import threading
 ## 
 ## The main function, and only top-level function in this file. Does all the things.
 #####################################################################################################
-
+#pdb.set_trace()
 def main(args):
     
     pidfile = "/var/run/cgpy.pid"
@@ -79,10 +79,12 @@ def main(args):
             if globalData.initStyle == "sysd":
                 logger.info("Initing systemd slice for cgroup user ID %d" % u)
                 ## TODO: Try to find a way to replace with a direct systemd call?
-                subprocess.check_call(["systemctl", "set-property", "--runtime", 
+                try:
+                    subprocess.check_call(["systemctl", "set-property", "--runtime", 
                                         "user-%d.slice" % u, "CPUAccounting=yes", "MemoryAccounting=yes",
                                         "BlockIOAccounting=yes"])
-
+                except Exception as e:
+                    logger.error("Error initing slice! %s" % e )
                 
             else:
                 logger.info("Staging cgroup directory for user ID %s" % u)
@@ -148,9 +150,11 @@ def main(args):
     while stop == 0:
         cpuLim = globalData.configData.cpu_pct_max * (globalData.cpu_period * globalData.cores)
         globalData.names = dict()
-        num_active = list()
+        #num_active = list()
+        num_active = 0
         sys_cputotals = getCPUTotal(sys_cputotals)
         arr_active_pids, arr_pids_by_user = util.getActivePids()
+        userstotal = len(globalData.arr_cgroups.keys())
         inactive_cpu = 0
         to_delete = list()
 
@@ -184,26 +188,31 @@ def main(args):
                 to_delete.append(c) 
             try:
                 globalData.arr_cgroups[c].updateTasks(arr_pids_by_user[c])
-                globalData.arr_cgroups[c].getCPUPercent(sys_cputotals)
+                globalData.arr_cgroups[c].getCPUPercent(sys_cputotals, userstotal)
                 globalData.names[globalData.arr_cgroups[c].ident] = c
                 if not globalData.arr_cgroups[c].isActive and (globalData.arr_cgroups[c].penaltyboxed or globalData.arr_cgroups[c].fixed_cpuLimit):
                     inactive_cpu += globalData.arr_cgroups[c].cpu_quota
                 if globalData.arr_cgroups[c].isActive: ## If over activity threshold, append to active Cgroups.
-                    num_active.append(c)
+                    # num_active.append(c)
+                    num_active += 1
             except KeyError as e:
                 logger.info("It's Broked: %s" % e)
                 pass # Just keep on trucking - an exception here just means a user logged out 
                      # somewhere in the block and we lost their key
-            except:
+            except Exception as e:
                 logger.error("DEBUG: Something really broked: %s" % e)
             for c in to_delete:
                 logger.info("No more tasks for %s, removing!" % c)
-                del globalData.arr_cgroups[c]
+                try:
+                    del globalData.arr_cgroups[c]
+                except KeyError:
+                    logger.info("Cgroup already removed!")
         ## This is our default mode, splitting CPU among active users
         ## (subtracting CPU used by non-active users for fairness)
-        logger.info(str(num_active))
-        if globalData.configData.throttleMode == "even_active" and len(num_active) > 1:
-            cpuLim = (globalData.configData.cpu_pct_max * ((globalData.cpu_period * globalData.cores) - inactive_cpu)) / len(num_active)
+        # logger.info(str(num_active))
+        logger.info("DEBUG: Active users is %d" % num_active)
+        if globalData.configData.throttleMode == "even_active" and num_active > 1:
+            cpuLim = (globalData.configData.cpu_pct_max * ((globalData.cpu_period * globalData.cores) - inactive_cpu)) / num_active
         
         ## TODO/stub: Fully implement a method for just capping everybody at a given 
         ## percentage and hoping for the best.
@@ -240,5 +249,8 @@ def main(args):
 
     signal.pause()
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except Exception as e:
+        logger.error("IT'S BROKED: %s" % e)
 
