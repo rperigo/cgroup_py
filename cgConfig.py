@@ -47,11 +47,12 @@ class config_holder(object):
             sys.exit(2)
 
         for o in cfgOptions:
-            if 'forceLegacy' == o:
+
+            if 'forcelegacy' == o:
                 try:
                     self.forceLegacy = cfg.getboolean('main', 'forceLegacy')
                 except (ValueError, ConfigParser.InterpolationError) as e:
-                    logger.error(_ERR_MSG % 'forceLegacy')
+                    logger.error(_ERR_MSG % 'forcelegacy')
                     
             if 'interval' == o:
                 try:
@@ -61,9 +62,9 @@ class config_holder(object):
             
             if 'minuid' == o:
                 try:
-                    self.minUID = cfg.getint('main', 'minUID')
+                    self.minUID = cfg.getint('main', 'minuid')
                 except (ValueError, ConfigParser.InterpolationError) as e:
-                    logger.error( _ERR_MSG % 'minUID' )
+                    logger.error( _ERR_MSG % 'minuid' )
 
             if 'cpu_pct_max' == o:
                 try:
@@ -74,26 +75,26 @@ class config_holder(object):
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'cpu_pct_max' )
             
-            if 'cgroup_memoryLimit_gigs' == o:
+            if 'cgroup_memorylimit_gigs' == o:
                 try:
-                    self.cgroup_memoryLimit_gigs = cfg.getfloat('main', 'cgroup_memoryLimit_gigs')
+                    self.cgroup_memoryLimit_gigs = cfg.getfloat('main', 'cgroup_memorylimit_gigs')
                     self.cgroup_memoryLimit_bytes = self.cgroup_memoryLimit_gigs * (1024 ** 3)
                 except (ValueError, ConfigParser.InterpolationError) as e:
-                    logger.error( _ERR_MSG % 'cgroup_memoryLimit_gigs' )
+                    logger.error( _ERR_MSG % 'cgroup_memorylimit_gigs' )
             
             if 'activitythreshold' == o:
                 try:
-                    self.activityThreshold = cfg.getfloat('main', 'activityThreshold')
+                    self.activityThreshold = cfg.getfloat('main', 'activitythreshold')
                     if self.activityThreshold > 1:
                         self.activityThreshold = self.activityThreshold / 100
                 except (ValueError, ConfigParser.InterpolationError) as e:
-                    logger.error( _ERR_MSG % 'activityThreshold' )
+                    logger.error( _ERR_MSG % 'activitytreshold' )
 
             if 'reservedcores' == o:
                 try:
-                    self.reservedCores = cfg.getint('main', 'reservedCores')
+                    self.reservedCores = cfg.getint('main', 'reservedcores')
                 except (ValueError, ConfigParser.InterpolationError) as e:
-                    logger.error( _ERR_MSG % 'reservedCores' )
+                    logger.error( _ERR_MSG % 'reservedcores' )
 
             if 'refresh' == o:
                 try:
@@ -103,13 +104,13 @@ class config_holder(object):
 
             if 'lower_throttlethresh' == o:
                 try:
-                    self.lower_ThrottleThresh = (cfg.getfloat('main', 'lower_ThrottleThresh') / 100)
+                    self.lower_ThrottleThresh = (cfg.getfloat('main', 'lower_throttlethresh') / 100)
                 except (ValueError, ConfigParser.InterpolationError) as e:
-                    logger.error( _ERR_MSG % 'lower_ThrottleThresh' )
+                    logger.error( _ERR_MSG % 'lower_throttlethresh' )
             
             if 'upper_throttlethresh' == o:
                 try:
-                    self.upper_ThrottleThresh = (cfg.getfloat('main', 'upper_ThrottleThresh') / 100)
+                    self.upper_ThrottleThresh = (cfg.getfloat('main', 'upper_throttlethresh') / 100)
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'upper_ThrottleThresh' )
             
@@ -119,7 +120,7 @@ class config_holder(object):
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'enableMonitoring' )
 
-            if 'shouldmemoryNag' == o:
+            if 'shouldmemorynag' == o:
                 try:
                     self.shouldMemoryNag = cfg.getboolean('main', 'shouldMemoryNag')
                 except (ValueError, ConfigParser.InterpolationError) as e:
@@ -155,7 +156,7 @@ class config_holder(object):
                 except(ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'throttleMode' )
             
-            if 'penaltyTimeout' == o:
+            if 'penaltytimeout' == o:
                 try:
                     self.penaltyTimeout = cfg.getint('main', 'penaltyTimeout')
                 except (ConfigParser.InterpolationError, ValueError) as e:
@@ -173,13 +174,13 @@ class config_holder(object):
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'pb_cpupct' )
 
-            if 'pb_limitMemory' == o:
+            if 'pb_limitmemory' == o:
                 try:
                     self.pb_limitMemory = cfg.getboolean('main', 'pb_limitMemory')
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'pb_limitMemory' )
 
-            if 'pb_memoryBytes' == o:
+            if 'pb_memorybytes' == o:
                 try:
                     self.pb_memoryBytes = memory_unitizer(cfg.get('main', 'pb_memoryBytes'))
                 except (ValueError, ConfigParser.InterpolationError) as e:
@@ -211,13 +212,13 @@ class config_holder(object):
             
             if 'throttle_log' == o:
                 try:
-                    self.msglog_dateformat = cfg.get('main', 'throttle_log')
+                    self.throttle_log = cfg.get('main', 'throttle_log')
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error(_ERR_MSG % 'throttle_log')
             
             if 'nag_ratelimit' == o:
                 try:
-                    self.msglog_dateformat = cfg.get('main', 'nag_ratelimit')
+                    self.nag_ratelimit = cfg.getint('main', 'nag_ratelimit')
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error(_ERR_MSG % 'nag_ratelimit')
 
@@ -226,6 +227,8 @@ class config_holder(object):
                     self.system_name = cfg.get('main', 'system_name')
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error(_ERR_MSG % 'system_name')
+
+
     
     def __init__(self):  # Init, set defaults.
         self.forceLegacy = False
@@ -266,13 +269,18 @@ class config_holder(object):
         # TODO: Document this very important option
         self.throttleMode = 'even_active' # "even_active|hard_cap"
         self.throttle_log = '/tmp/cgroup_py/throttle.log'
-        self.msglog_dateformat = '%b %d %H:%M:%S'
 
+        ## Date/timestamp format used by /var/log/messages
+        self.msglog_dateformat = '%Y %b %d %H:%M:%S'
+        
+    def get_oom_msg(self, mlimit=None):
         ## Default message to send users when they OOM.
         try:
             with open('/etc/cgroup_py/oom_email.txt', 'r') as oomfile:
                 self.oom_message = oomfile.read().splitlines()
         except (OSError, IOError) as e:
+            if not mlimit:
+                mlimit = self.cgroup_memoryLimit_bytes / (1024 ** 2) ## MEGS
             logger.error("Unable to load oom message textfile. Using default. %s" % e)
             self.oom_message = dedent("""
                 This email is to inform you that a process within your cgroup on %s has gone out
@@ -282,7 +290,7 @@ class config_holder(object):
                 from appearing in the future. 
 
                 Thank you.
-                """ % (self.hostname, (self.cgroup_memoryLimit_bytes / (1024 ** 2))))
+                """ % (self.hostname, mlimit)
       
     def dumpconfig(self):
         out = "\n"

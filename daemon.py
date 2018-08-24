@@ -196,11 +196,10 @@ def main(args):
                     # num_active.append(c)
                     num_active += 1
             except KeyError as e:
-                logger.info("It's Broked: %s" % e)
                 pass # Just keep on trucking - an exception here just means a user logged out 
                      # somewhere in the block and we lost their key
             except Exception as e:
-                logger.error("DEBUG: Something really broked: %s" % e)
+                logger.error("Error setting up cgroup for user: %s" % (str(c), e))
             for c in to_delete:
                 logger.info("No more tasks for %s, removing!" % c)
                 try:
@@ -210,7 +209,7 @@ def main(args):
         ## This is our default mode, splitting CPU among active users
         ## (subtracting CPU used by non-active users for fairness)
         # logger.info(str(num_active))
-        logger.info("DEBUG: Active users is %d" % num_active)
+        #logger.info("DEBUG: Active users is %d" % num_active)
         if globalData.configData.throttleMode == "even_active" and num_active > 1:
             cpuLim = (globalData.configData.cpu_pct_max * ((globalData.cpu_period * globalData.cores) - inactive_cpu)) / num_active
         
@@ -252,5 +251,5 @@ if __name__ == "__main__":
     try:
         main(sys.argv[1:])
     except Exception as e:
-        logger.error("IT'S BROKED: %s" % e)
+        logger.error("Cgroupynator has experienced a total failure of safety systems. Please consult the following message for more: %s" % e)
 

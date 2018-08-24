@@ -32,7 +32,7 @@ def oomailer(cg_ident):
             A user with name %s, UID %s on %s node %s has just gone OOM. 
             """ % (uname, uid, globalData.configData.system_name, hname)) ## TODO: Make this nicer, maybe pull from a text file.
     adminMsg = MIMEText(adminText)
-    adminMsg['Subject'] = "KD Beta - user %s OOM notification" % uname
+    adminMsg['Subject'] = "%s user %s OOM notification" % (globalData.configData.system_name, uname)
     adminMsg['To'] = toAdmin
     adminMsg['From'] = fAddress
     message['Subject'] = "Out Of Memory Notification for %s, %s node %s" % (uname, globalData.configData.system_name, hname)

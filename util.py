@@ -1,3 +1,8 @@
+####################################################################################
+# util.py
+# Provides a number of functions to get information about the system and/or processes
+####################################################################################
+
 import re
 import os, subprocess, logging, cgConfig
 from string import letters, digits
@@ -368,3 +373,9 @@ def gen_EventID(length=16):
         outstr += legits[randrange(0, len(legits))]
     
     return outstr
+
+
+
+## Figure out the timestamp string used in /var/log/messages (and/or kern)
+def messagelog_timestamp():
+    print("STUB")

@@ -42,6 +42,9 @@ cgroup_roots = ( cpu_cgroup_root, cpuset_cgroup_root, cpuacct_cgroup_root, memor
 
 configData = cgConfig.config_holder()
 configData.parseConfigFile(cfgPath)
+
+configData.get_oom_msg() ## Set our OOM message / reported memory limit _after_ parsing config
+
 arr_cgroups = dict()
 arr_pb_groups = dict()
 # hold currently throttled users, their cpu and mem usage (Curr/avg), and throttle start

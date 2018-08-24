@@ -43,7 +43,7 @@ def runCheck(initType, scrn):
     if initType == "systemd":
         try:
             getStatus = subprocess.Popen(['systemctl', 'status', 'cgroup_py'], stdout=subprocess.PIPE)
-        except subprocess.CalledProcessError, IOError as e:
+        except (subprocess.CalledProcessError, IOError) as e:
             eMsg = "Unable to get status of cgroup_py daemon. Exiting!"
             scrn.addstr(1,1,eMsg)
             time.sleep(2)
@@ -64,7 +64,7 @@ def runCheck(initType, scrn):
     elif initType == "sysV":
         try:
             getStatus = subprocess.Popen(['/etc/init.d/cgroup_py', 'status'], stdout=subprocess.PIPE)
-        except subprocess.CalledProcessError, IOError as e:
+        except (subprocess.CalledProcessError, IOError) as e:
             eMsg = "Unable to get status of cgroup_py daemon. Exiting!"
             scrn.addstr(1,1, eMsg)
             time.sleep(2)
@@ -91,7 +91,7 @@ def get_user_name(cgroup):
     uid = cgroup.translate(None, "%s-./" %string.letters).rstrip()
     try:
         getent = subprocess.Popen(['getent', 'passwd', uid], stdout=subprocess.PIPE).communicate()[0]
-    except subprocess.CalledProcessError, IOError as e:
+    except (subprocess.CalledProcessError, IOError) as e:
         logger.error("Couldn't determin username for cgroup %s, %s" %(cgroup, e))
         return "unknown"
 

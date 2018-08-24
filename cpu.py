@@ -1,4 +1,10 @@
 
+###################################################################################################
+# cpu.py
+# Contains a few functions dealing with getting CPU information both for the system as a whole as
+# well as individual cgroups
+#############################
+
 import cgConfig, os
 from log import logger
 
@@ -61,7 +67,7 @@ def get_user_CPUTotals(tasklist):
                 status = f.read().splitlines()
                 f.close()
             except IOError:
-                logger.warning('Unable to get status of PID %s for user %s', process, subDir)
+                logger.warning('Unable to get status of PID %s', process)
                 continue
 
             # getTGroup = status[cgConfig.tgid_statusline].split(':')
@@ -92,7 +98,7 @@ def get_user_CPUTotals(tasklist):
                 except IOError:
                     logger.warning('Unable to get status of PID %s for user %s', process, subDir)
             else:
-                logger.info("DEBUG: IGNORING PID %s" % process)
+              #  logger.info("DEBUG: IGNORING PID %s" % process)
                 outlist.append(process)
         else:
             logger.warning("PID disappeared: %s" % process)
@@ -101,7 +107,7 @@ def get_user_CPUTotals(tasklist):
 
 
 # Function to apply CPU limit for a given cgroup
-# Take Cgroup as FULL PATH to their CPU-mounted cgroup 
+# Take Cgroup as FULL PATH to their CPU-mounted cgroup
 
 def enforceLimitForCgroup(cgroup, cpuLimit):
     initMode = cgConfig.initMode

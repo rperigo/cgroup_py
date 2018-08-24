@@ -1,0 +1,146 @@
+===================================================================================================
+***************************************  Cgroup Py v.2 ********************************************
+===================================================================================================
+
+BIG OL DISCLAIMER: This is currently in an Alpha state. Basic functionality exists for SystemD-
+enabled systems, however a number of features are not fully implemented and support for legacy
+systems has not yet been baked in.
+
+You have been warned.
+
+1) The Basics
+    This application (if you can call it that) exists to help moderate resource usage (at the mom-
+    ent just CPU and memory) on real-time multi-user systems. Each user is given a cgroup for all
+    porcesses spawned by their UID. This is then monitored for CPU usage and limits put in place
+    to ensure that all users have a fair amount of CPU at their disposal. It is something like a 
+    dynamic container - the CPU limit is derived by taking the number of *active* users on the sys-
+    tem and dividing our maximum CPU percentage by that. This ignores all users who are only util-
+    izing a very small percentage of CPU, such as those logged in but idling in a VNC session.
+
+    Memory limits are NOT dynamic, as changing the RSS ceiling on an active cgroup could cause
+    unintended process death.
+
+    The application makes use of multiple threads to get this job done with some semblence of
+    efficiency.
+
+    daemon.py spawns the main thread, and a secondary thread to create a Unix socket and listen on
+    it [WIP - Aug. 2017]. A thread is also created for each user present on the system. These per-
+    user threads are required to watch for Out of Memory events using an EventFD. In previous
+    iterations, this was handled via separate subprocesses, but was unnecessarily messy in startup
+    and shutdown.
+
+    1a) Where is everybody?
+
+        /usr/bin/cgroup_py/ will hold all of our Python and some ancilliary shell scripts needed
+        for the init / stop process. Only the .sh scripts should be directly executable.
+
+        /etc/cgroup_py/ will hold our config data. In the future, I would like to have a users.d
+        folder inside of there for static per-user configs (e.g. user trilobyte is a known CPU
+        hog and therefore we want to ensure that their cgroup is always capped at a lower CPU
+        limit than normal)
+
+        init scripts and systemd service files go in their appropriate normal locations
+
+                /etc/init.d/cgroup_py
+                or
+                /usr/lib/systemd/system/cgroup_py.service
+
+        logging is done in two places:
+
+                /var/log/cgroup_py.log is our standard logfile. Debug data, errors, etc get logged
+                here
+
+                /tmp/cgroup_py/throttle.log is a log of any throttle events and OOMs. It is only
+                needed by some external monitoring scripts we have to track such things. This
+                data can also be piped into / read from the socket, so in theory a monitoring
+                daemon can be crafted to leverage this and monitor OOM events and user throttling
+                as a separate process. This file is generally rotated daily.
+
+    
+    1b) Installation
+
+        REQUIREMENTS:
+
+        python 2.7+
+        dbus-python (centos 7)
+
+        Untar, cd into cgroup_py, bash install.sh (or chmod u+x install.sh and ./install.sh)
+
+        The installer WILL overwrite files in /usr/bin/cgroup_py, and will ask about the config
+        file if one already exists. Passing -y to the installer will automatically keep the
+        existing config file and just overwrite the script files.
+
+        install.sh -y -q 
+        
+        will install / upgrade, automatically keeping any found config, and 
+        suppressing output.
+
+        
+
+2) Architecture Overview
+
+    2a) daemon.py
+
+        This is the main script. Spawns our initial threads, calls other classes to bring up our
+        data structures, and contains the main loop.
+
+        The main loop simply executes every n seconds (as configured by admin) to get a list of
+        all processes, ensure they are correctly assigned to their cgroup, set limits
+        appropriately and ensure any newly logged-in users are set up in our data structures.
+        
+        Exits gracefully upon receipt of a SIGINT.
+
+    2b) globalData.py
+
+        This contains some data to be shared by multiple classes / modules in the application.
+        Keeps us from having to pass objects around between functions.
+
+        Primarily, the data scraped by the config file parser is of concern here.
+
+    2c) cgConfig.py
+
+        Contains a class to hold all of our config data, as well as methods to parse the config
+        files themselves and set our options appropriately. The config_holder object is later
+        instantiated in globalData.py and called upon by other classes / modules when needed.
+
+    2d) cgroup.py
+
+        Contains a class to house data for a cgroup, and methods to change that data and set
+        limits.
+
+    2e) cpu.py
+
+        Some helpful methods for dealing with CPU information / limits
+
+    2f) memory.py
+
+        Ditto RAM
+
+    2g) util.py
+
+        Ditto miscellaneous helper functions
+
+    2h) oom_thread.py
+
+        Subclasses threading.thread, allows us to spawn individual threads to track user OOM
+        events. This is done by setting up and watching an eventfd in the cgroup's memory
+        section. That eventfd is modified when an OOM event happens, which fires off some
+        sanity checks to ensure we aren't sending spam. This is NECESSARY as the kernel will
+        notify us of each *THREAD* that is killed by the OOM reaper, which can and has resulted
+        in dozens of notifications for a single OOM event.
+
+        Additionally, it is possible for false positive OOMs - especially when removing a cgroup
+        as the eventfd is linked to another file in the memory section (memory.oom_control), which
+        can be changed when the cgroup itself is modified or removed. Checks are made against
+        kernel logs to ensure we actually got an OOM out of the deal.
+
+    2i) cg_socket.py
+
+        Also subclasses threading.thread, this time to create a socket and listen on it. This lets
+        us pipe data to and *from* other processes. Helpful for monitoring and a planned
+        interactive shell / language to let us adjust limits and penaltybox users on the fly.
+        [WIP Aug 2017]
+
+    2j) systemd.py
+
+        Hooks us into systemd! Requires python-dbus.

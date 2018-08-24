@@ -137,7 +137,7 @@ class cgroup:
         self.cur_throttle_turns = 0
         self.cur_throttle_avg_cpu = 0
         self.cur_throttle_cpu_total = 0
-        self.throttle_grace = False
+        self.throttle_grace = 0
         self.throttled = False
         
         self.penaltyboxed = False
@@ -205,7 +205,7 @@ class cgroup:
                     if not f in written:
                         try:
                            
-                            logger.info("Attempting to add %s to %s" % (pid, f))
+                           ## logger.info("Attempting to add %s to %s" % (pid, f))
                             # print >>f, pid
                              # WHAT THE HECK?! THIS IO ERROR IS BEING IGNORED IF THE PID DISAPPEARS!?
                              ## OK, so this only fails if we open the file and KEEP IT OPEN while adding tasks
@@ -291,9 +291,10 @@ class cgroup:
         else:
             divisor = totalusers / 3
         theoretical_limit = configData.activityThreshold / divisor
+        #logger.info("DEBUG: %f is the current theoretically cpu activity threshold." % theoretical_limit)
         self.cpu_pct = cg_change / system_totals[3]
 
-        logger.info("DEBUG: %s has CPU percent of: %f" % (self.ident, self.cpu_pct))
+        #logger.info("DEBUG: %s has CPU percent of: %f" % (self.ident, self.cpu_pct))
       
         ## Changing this because a large number of active users would break logic (
         ## nobody would be using more than the activity threshold and our upper limit
@@ -328,6 +329,7 @@ class cgroup:
                 self.throttled = False
                 self.cur_throttle_avg_cpu = self.cur_throttle_cpu_total / float(self.cur_throttle_turns)
                 self.log_throttle()
+                self.throttle_grace = 0
 
         if newtime < 0:
             self.cpu_time = 0
