@@ -35,7 +35,7 @@ class oom_thread(threading.Thread):
             cgoom_control = os.open("%s/memory.oom_control" % self.mempath, os.O_RDONLY) ##  ^^^^ /memory.oom_control
         except (IOError, OSError) as e:
             logger.error("Error creating eventfd for cgroup %s. Unable to monitor for OOMs!. Additional information: %s" % (self.cgroup_ident, e))
-            self.join()
+            return 3
         writebuf = str(efd)+" "+str(cgoom_control)
         try:
             os.write(cgevent_control, writebuf)
@@ -86,7 +86,6 @@ class oom_thread(threading.Thread):
                             
                             # if all(b in line for b in ["Task", "killed", str(self.uid)]):
                             if "Task" in line:
-                                logger.info("DEBUG: Candidate line - %s" % line )
                                 if re.match("^.*[kK]illed.*$", line):
                                     if re.match("^.*%s.*$" % str(self.uid), line):
                                         spline = line.split()

@@ -290,7 +290,7 @@ class config_holder(object):
                 from appearing in the future. 
 
                 Thank you.
-                """ % (self.hostname, mlimit)
+                """ % (self.hostname, mlimit))
       
     def dumpconfig(self):
         out = "\n"
