@@ -131,7 +131,7 @@ def main(args):
         
 
         for cg in globalData.arr_cgroups.keys():
-            globalData.arr_cgroups[cg].setlimits(globalData.cores * globalData.cpu_period, memLim=globalData.configData.maxGigs, shares=1024)
+            globalData.arr_cgroups[cg].setlimits(globalData.cores * globalData.cpu_period, memLim=int(globalData.configData.maxGigs), shares=1024)
             globalData.arr_cgroups[cg].oom_thread.active.clear()
 
         try:

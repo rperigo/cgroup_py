@@ -78,7 +78,7 @@ class config_holder(object):
             if 'cgroup_memorylimit_gigs' == o:
                 try:
                     self.cgroup_memoryLimit_gigs = cfg.getfloat('main', 'cgroup_memorylimit_gigs')
-                    self.cgroup_memoryLimit_bytes = self.cgroup_memoryLimit_gigs * (1024 ** 3)
+                    self.cgroup_memoryLimit_bytes = int(self.cgroup_memoryLimit_gigs * (1024 ** 3)) ## Needs to be int for file writing later. And you can't use .1 bytes :P
                 except (ValueError, ConfigParser.InterpolationError) as e:
                     logger.error( _ERR_MSG % 'cgroup_memorylimit_gigs' )
             

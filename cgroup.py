@@ -347,17 +347,31 @@ class cgroup:
     ## and will be applied once the user's memory allocation has dropped below the limit.
 
     def setlimits(self,cpuLim, memLim=None, shares=None):
-    
+        increase = False
+
         if len(self.tasks) > 0:
-            memLim = memLim or self.mem_limit ## Take memlimit, or use value from stored var
+            if memLim != None:
+                if memLim != 0:
+                    if memLim > self.mem_limit:
+                        increase = True
+                    self.mem_limit = memLim
+                else:
+                    self.mem_limit = configData.cgroup_memoryLimit_bytes
+            else:
+               memLim = self.mem_limit ## Take memlimit, or use value from stored var
+            # if memLim == None:
+            #         logger.error("Memlimit Set inappropriately!")
+            # else:  
+            #         logger.info("Memlimit is: %s" % str(memLim))
             shares = shares or 1024
             
             
             ## take '0' as a defaulter. 
             if cpuLim == 0:
                 cpuLim = configData.cpu_pct_max * (cores * cpu_period)
-            if memLim == 0:
-                memLim = memLim = configData.cgroup_memoryLimit_bytes
+            
+            memLim = self.mem_limit
+            
             if initStyle == "sysv" or configData.forceLegacy == True:
                 try:
                     with open("%s/cpu.shares" % self.cpu_cgroup_path, 'w') as f:
@@ -369,20 +383,46 @@ class cgroup:
                         f.write('{0:.0f}'.format(cpuLim)) # format to remove decimal.
                 except (IOError, OSError) as e:
                     logger.error('Unable to write cpu limit for cgroup %s' % self.ident)
-                try:
-                    with open('%s/memory.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
-                        f.write(str(memLim))
-                except (IOError, OSError) as e:
-                    logger.error('Unable to write memory limit for cgroup %s' % self.ident)
+                
                 if self.noswap:
+                    if increase == True:
+                        print("increasing mem limit to %d" % memLim)
+                        
+                        try:
+                            with open('%s/memory.memsw.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                                f.write(str(memLim + 128)) ## Add a few bytes here to make sure a rounding error elsewhere may not break us.
+                            with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
+                                f.write('0')
+                        except (IOError, OSError) as e:
+                            logger.error('Unable to write memory+swap limit for cgroup %s: %s' % (self.ident, e))
+
+                        try:
+                            with open('%s/memory.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                                f.write(str(memLim))
+                        except (IOError, OSError) as e:
+                            logger.error('Unable to write memory limit for cgroup %s: %s \n%d' % (self.ident, e, memLim))
+                    else:
+                        try:
+                            with open('%s/memory.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                                f.write(str(memLim))
+                        except (IOError, OSError) as e:
+                            logger.error('Unable to write memory limit for cgroup %s: %s \n%d' % (self.ident, e, memLim))
+                        
+                        try:
+                            with open('%s/memory.memsw.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                                f.write(str(memLim + 128)) ## Add a few bytes here to make sure a rounding error elsewhere may not break us.
+                            with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
+                                f.write('0')
+                        except (IOError, OSError) as e:
+                            logger.error('Unable to write memory+swap limit for cgroup %s: %s' % (self.ident, e))
+                else:
+
+                    ## Had to duplicate this...
                     try:
-                        with open('%s/memory.memsw_limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
+                        with open('%s/memory.limit_in_bytes' % self.mem_cgroup_path, 'w') as f:
                             f.write(str(memLim))
-                        with open('%s/memory.swappiness' % self.mem_cgroup_path, 'w') as f:
-                            f.write('0')
                     except (IOError, OSError) as e:
-                        logger.error('Unable to write memory+swap limit for cgroup %s' % self.ident)
-                    
+                        logger.error('Unable to write memory limit for cgroup %s: %s \n%d' % (self.ident, e, memLim))
             else: 
                 if self.isUser:
                     shares = UInt64(shares)
