@@ -53,6 +53,8 @@ names = dict()
 
 max_cpu_usecs = ( cores * cpu_period ) * configData.cpu_pct_max
 
+
+oomEmail = True ## TODO: Move this to configdata
 # # should be pid:uid. Allows us to gather active PIDs more efficiently by statting
 # # only newly-added pidfolders rather than doing an ls+stat on each run.
 # arr_active_pids = dict()

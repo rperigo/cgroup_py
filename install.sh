@@ -34,12 +34,12 @@ do
     esac
 done
 
-if [ ${SYSD} == true ] && [ ${SHUSH} == false ]
+if [[ ${SYSD} == true ]] && [[ ${SHUSH} == false ]]
 then
     echo "SystemD found! Will use native unit file for service management."
 fi
 
-if [ ${SHUSH} == 'false' ]
+if [[ ${SHUSH} == 'false' ]]
 then
     echo "This script will install / update cgroup_py on this system."
 fi

@@ -199,7 +199,7 @@ def main(args):
                 pass # Just keep on trucking - an exception here just means a user logged out 
                      # somewhere in the block and we lost their key
             except Exception as e:
-                logger.error("Error setting up cgroup for user: %s" % (str(c), e))
+                logger.error("Error setting up cgroup for user: %s. Info: %s" % (str(c), e))
             for c in to_delete:
                 logger.info("No more tasks for %s, removing!" % c)
                 try:
@@ -208,8 +208,7 @@ def main(args):
                     logger.info("Cgroup already removed!")
         ## This is our default mode, splitting CPU among active users
         ## (subtracting CPU used by non-active users for fairness)
-        # logger.info(str(num_active))
-        #logger.info("DEBUG: Active users is %d" % num_active)
+       
         if globalData.configData.throttleMode == "even_active" and num_active > 1:
             cpuLim = (globalData.configData.cpu_pct_max * ((globalData.cpu_period * globalData.cores) - inactive_cpu)) / num_active
         

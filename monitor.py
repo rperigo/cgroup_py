@@ -338,7 +338,7 @@ def drawDataBox(mode, window, columns, height, userDict, CG, revCG, usert, rever
 
  
 # sorting hat
-# TODO: implement Griffendor-Slitherin sort algorithm
+# TODO: implement Griffendor-Slytherin sort algorithm
 #
 # Takes a list of userIDs, dict of lists/tuples keyed to UID,
 # and sort mode.

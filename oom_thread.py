@@ -111,8 +111,8 @@ class oom_thread(threading.Thread):
                     
                     if len(found) == 0 and len(logsBroken) < len(kernlogs):
                         shouldSend = False
-                        logger.warning("Not sending OOM for %s. Found %d events in logs, and %d broken logs." % (self.cgroup_ident, len(found), len(logsBroken)))        
-                    else:
+                        logger.warning("Not sending OOM for %s. Found %d events in logs, and %d broken logs." % (self.cgroup_ident, len(found), len(logsBroken)))
+                    else if globalData.oomEmail == True:
                         shouldSend = True
 
                     if shouldSend == True:

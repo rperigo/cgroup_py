@@ -217,11 +217,7 @@ class cgroup:
                         except Exception as exc:
                          #   f.close()
                             logger.error("Unable to append task to cgroup %s, %s" % (self.ident, exc))
-        # for f in tfs:
-        #     try:
-        #         f.close()
-        #     except:
-        #         logger.error("Unable to close FD for %s: %s" %(f, e))
+       
 
         # Grab raw memory info from memory.stat, pipe to dict
         try:
